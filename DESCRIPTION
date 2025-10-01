@@ -1,0 +1,46 @@
+Package: dialipar
+Type: Package
+Title: DIA-LiPA reporting tool
+Version: 0.99.0
+Authors@R: c(
+    person(
+      "andrea", "argentni",
+      email = "andrea.argentini@ugent.be",
+      role = c("aut", "cre")
+    )
+  )
+Description: More about what it does (maybe more than one line).
+    Continuation lines should be indented.
+License: What license is it under?
+Encoding: UTF-8
+LazyData: true
+Imports:
+  arrow,
+  dplyr,
+  stringr,
+  seqinr,
+  IRanges,
+  ggplot2,
+  BiocManager,
+  MsCoreUtils,
+  SummarizedExperiment,
+  withr,
+  utils,
+  ggsci,
+  tidyr,
+  stats,
+  rlang,
+  tibble,
+  QFeatures,
+  ggrepel,
+  msqrob2,
+  quarto,
+  logger,
+  fs,
+  knitr,
+  assertthat,
+  magrittr,
+  yaml
+Suggests: 
+    testthat (>= 3.0.0),
+RoxygenNote: 7.3.2

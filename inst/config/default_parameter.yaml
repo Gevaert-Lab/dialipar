@@ -1,0 +1,17 @@
+params:
+ description: ""
+ design_file: ""
+ input_file_tc: ""
+ input_file_lip: ""
+ fasta_file: ""
+ adjPval_thr: 0.05
+ folder_prj: ""
+ title: ""
+ subtitle: ""
+ author: ""
+ formula:  ""
+ comparisons: ""
+ FC_thr: 1
+ comparison_label: ""
+ poi: ''
+

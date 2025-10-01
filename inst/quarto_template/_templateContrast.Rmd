@@ -1,0 +1,42 @@
+
+
+```{r}
+library(plotly)
+log_info('Inside contrast visual  ....')
+
+label_work <- gsub('Group','',label)
+  label_work_f <- gsub(' ','_',label_work)
+
+log_info('  Vocano plot ....')
+ggplotly(data$volcano)
+
+ggsave(file.path(path,paste0("Volcano_annotated",".pdf")) , plot=data$volcano2file , dpi = 600, height = 6, width = 10 )
+library(DT)
+log_info('  Top table rendering ....')
+
+DT::datatable( data$toptable %>% arrange(adjPval)  ,
+             extensions = c('FixedColumns', 'Scroller'),
+             options = list(fixedColumns = TRUE, scrollY = 400, scrollX = TRUE,
+                            scroller = TRUE, dom = 'Bfrtip', autoWidth = TRUE
+             ),
+ ) 
+ 
+ #%>% formatStyle(
+ #  'differential_expressed',
+ #  target = 'row',
+ #   textAlign = 'center',
+ #   backgroundColor =  styleEqual(c('UP', 'DOWN'), c('#7fcdbb', '#fec44f')))%>% formatRound(columns=c('logFC'), digits=2) %>%
+ # formatSignif(columns = c('pval', 'adjPval'), digits = 2) %>% formatString(perc_field, suffix='%')
+
+ttable <- data$toptable %>% arrange(adjPval) 
+write.csv2(ttable, file= file.path(path,paste0("Toptable",".csv")), row.names=FALSE )
+log_info('  Barcode plot rendering ....')
+
+
+plotly_barcode <- lapply(data$barcode, function(p) if (!is.null(p)) ggplotly(p))
+
+htmltools::tagList(plotly_barcode)
+
+#data$barcode
+
+```
