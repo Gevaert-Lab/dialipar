@@ -318,7 +318,6 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info ('DIA-LiPA start  ...')
 
   ## Drafting the  flow
- 
   if (params_report$input_file_tc == ''){
       inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = FALSE, params_report$design_file)
 
@@ -329,7 +328,7 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   fastaproc <- read_fasta_ann(params_report$fasta_file )
   
   if (fastaproc$status == 1) stop(fastaproc$error)
-  
+
   if (inputproc$diann_flag == TRUE) {
       annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
 
@@ -337,6 +336,7 @@ render_dialipa_report <- function(params_report, template, report_folder, report
       annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
 
   }
+  log_info( paste('Dim annotate_diann ', dim(annproc$result), collapse = ' '))
   if (annproc$status == 1) stop(annproc$error)
   consproc <- consensus_normalisation(annproc$result)
   
@@ -344,14 +344,23 @@ render_dialipa_report <- function(params_report, template, report_folder, report
 
   LiP_annotated <- consproc$normalized %>%  filter(Pipeline=="LiP")
   TC_annotated <-  consproc$normalized %>% filter( Pipeline=="TC")
+
+  log_info( paste('Dim LiP_annotated ', dim(LiP_annotated), collapse = ' '))
+  
+  log_info( paste('Dim TC_annotated ', dim(TC_annotated), collapse = ' '))
+
   coverageproc_lip  <- calculate_coverages(LiP_annotated)
   coverageproc_tc <- calculate_coverages(TC_annotated)
   complete_report <- bind_rows(coverageproc_lip$result, coverageproc_tc$result)
+  log_info( paste('Dim complete_report ', dim(complete_report), collapse = ' '))
 
   diann_col <- c('Run', 
       'Precursor.Id', 
+      'pep_type',
       'total_repeats',
       'repeat_nr',
+      'start',
+      'end',
       'Modified.Sequence', 
       'Stripped.Sequence', 
       'Accession',
@@ -365,11 +374,10 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   tcproc <- input_qf (coverageproc_tc$result , inputproc$design , columns_not_wide = diann_col, flag_tc = TRUE )
 
   tc_proc_scaling <- processing_tc_qfeat(tcproc$qf_pe, inputproc$design )
-
   ## TODO hard oded 
   LiP_annotated_corr <- 
   coverageproc_lip$result %>% 
-      mutate( ID = paste(Protein.Group, Drug),
+      mutate( ID = paste(Protein.Group, Treatment),
             abundance_adjustment = tc_proc_scaling$adj_scaling_df$abundance_adjustment[ match(ID,   tc_proc_scaling$adj_scaling_df$ID)] %>% 
               ifelse(is.na(.), 0, .),
             adjPQ = normPQ-abundance_adjustment ) 
@@ -386,8 +394,6 @@ render_dialipa_report <- function(params_report, template, report_folder, report
                     df_anno =LiP_annotated_corr ,
                     layer= 'precursor' )
   names(res_DE_) <-  params_report$comparison_label
-
-
 
   ## -- template creation legacy code.
 
@@ -420,7 +426,6 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   saveRDS(res_DE_, file.path(temp_work_dir,basename(template_source_folder), 'resDE_.RDS'  ))
   params_report$res_DE <-   file.path(temp_work_dir,basename(template_source_folder),'resDE_.RDS' )
   log_info('Copy Rds results ...done')
-
    # Construct the path to the copied template file in the temp directory.
   # Assumes that the template file is directly inside the copied folder.
   temp_template_path <- file.path(temp_work_dir, basename(template_source_folder), template)
@@ -469,6 +474,5 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info('Cleaning temp folder ...')
   # Optionally, remove the temporary working directory to clean up
   unlink(temp_work_dir, recursive = TRUE)
-
   return (-1)
 }

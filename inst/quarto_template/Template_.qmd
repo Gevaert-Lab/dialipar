@@ -1,5 +1,5 @@
 ---
-title: "DIA-LiP MS:  `r params$title`"
+title: "DIA LiP-MS Analysis:  `r params$title`"
 subtitle: "`r params$subtitle`"
 author: "`r params$author`"
 format: 
@@ -133,10 +133,11 @@ res_DE <-  readRDS(params$res_DE )
 ```
 
 
-##  General QC plots
+##  General Quality Control
 
-```{r main_qc}
-#| layout: [[45,-10, 45], [45,-10, 45]]
+### Identification
+
+```{r identification}
 #| lightbox: true
 
 
@@ -163,6 +164,14 @@ qc_idrate <-  ggplot(to_plot_a , aes(x = CondRep, y = IDs, fill = Condition)) +
 qc_idrate
 
 ggsave(   file.path(params$folder_prj, "Result", "IDs.pdf"),plot = qc_idrate,  dpi = 600, height = 6, width = 12)
+```
+
+### Abundance Distribution
+
+```{r abundance_distr}
+#| layout-ncol: 2
+#| lightbox: true
+
 
 ##---------------
 to_plot_b  <- complete_rep %>% 
@@ -181,7 +190,8 @@ qc_intdistr <- ggplot(to_plot_b, aes(x = CondRep,
 
 qc_intdistr
 
-ggsave(   file.path(params$folder_prj, "Result", "boxplots.pdf"),plot = qc_idrate,  dpi = 600, height = 6, width = 12)
+ggsave(   file.path(params$folder_prj, "Result", "intensity_distribution_boxplots.pdf"),plot = qc_idrate,  dpi = 600, height = 6, width = 12)
+
 ##-----------------
 to_plotc <- complete_rep %>% 
   distinct(CondRep, Precursor.Id, .keep_all = T) 
@@ -198,6 +208,14 @@ qc_inthisto
 
 ggsave( file.path(params$folder_prj, "Result","intensity_histogram.pdf"), dpi = 600, height = 6, width = 12)
 
+```
+
+### Missed Cleavage Rate
+
+```{r miscleavage}
+#| lightbox: true
+
+
 MC_alpha_mapping <- c("0" = 1, 
                     "1" = 0.6, 
                     "2" = 0.25)
@@ -211,7 +229,7 @@ qc_missclev <-  ggplot(to_plotd, aes(x = Replicate,
            colour = "black") +
   scale_alpha_manual(values = MC_alpha_mapping, guide = guide_legend(override.aes = list(fill = pal_observable()(1)))) +
   scale_fill_observable() +
-  facet_wrap(Pipeline~Drug, 
+  facet_wrap(~Condition, 
              scales = "free_x") +
   labs(title = "Missed cleavages per sample",
        x = "Replicate",
@@ -219,15 +237,15 @@ qc_missclev <-  ggplot(to_plotd, aes(x = Replicate,
   theme_bw()
 qc_missclev
 
-ggsave( file.path(params$folder_prj, "Result","missedCleavages_numbers.pdf"), plot =  qc_missclev , dpi = 600, height = 6, width = 10)
+ggsave( file.path(params$folder_prj, "Result","missed_cleavages_rate.pdf"), plot =  qc_missclev , dpi = 600, height = 6, width = 10)
 
 
 ```
 
-## QC at Precursor Level 
+###  Pecursor Type Distribution
 
 ```{r qc_miss_cleavage}
-#| layout: [[45,-10, 45], [35]]
+#| layout-ncol: 2
 #| lightbox: true
 
 
@@ -240,7 +258,7 @@ qc_tryptic <-  ggplot(to_plote , aes(x = Replicate)) +
            colour = "black"
            ) +
   scale_fill_nejm() +
-  facet_wrap(Pipeline~Drug, 
+  facet_wrap(~Condition, 
              scales = "free_x") +
   labs(title = "Peptide types per sample",
        x = "Replicate",
@@ -266,17 +284,23 @@ qc_terminality <- ggplot(to_plotf, aes(x = Replicate)) +
            colour = "black"
            ) +
   scale_fill_nejm() +
-  facet_wrap(Pipeline~Drug, 
+  facet_wrap(~Condition, 
              scales = "free") +
-  labs(title = "Peptide types per sample",
+  labs(title = "Peptide types per sample excluding tryptic",
        x = "Replicate",
        fill = "Peptide type") +
   theme_bw()
 
 qc_terminality
 
-ggsave( file.path(params$folder_prj, "Result","peptideType_distribution_termini.pdf"), plot=qc_terminality,  dpi = 600, height = 6, width = 10)
+ggsave( file.path(params$folder_prj, "Result","peptideType_distribution_excluding_tryptic.pdf"), plot=qc_terminality,  dpi = 600, height = 6, width = 10)
 
+```
+
+### Precursor Charge State Distribution
+
+```{r pr_charge_state}
+#| lightbox: true
 
 to_plotz <- complete_rep %>% 
   distinct(CondRep, Precursor.Id, pep_type, .keep_all = T) %>% 
@@ -286,18 +310,16 @@ qc_chargedistr <- ggplot(to_plotz, aes(x = Replicate)) +
               geom_bar(aes(fill = factor(Precursor.Charge, levels = 4:1)),
                       colour = "black") +
               scale_fill_nejm() +
-              facet_wrap(Pipeline~Drug, 
+              facet_wrap(~Condition, 
                         scales = "free_x") +
-              labs(title = "Peptide types per sample",
+              labs(title = "Precursor Charge State Distribution",
                   x = "Replicate",
                   fill = "Charge state") +
               theme_bw()
 
 qc_chargedistr
 
-ggsave( file.path(params$folder_prj, "Result","charge_distribution.pdf"), plot= qc_chargedistr , dpi = 600, height = 6, width = 10)
-
-
+ggsave( file.path(params$folder_prj, "Result","Precursor_Charge_State Distribution.pdf"), plot= qc_chargedistr , dpi = 600, height = 6, width = 10)
 
 ```
 
@@ -306,7 +328,7 @@ ggsave( file.path(params$folder_prj, "Result","charge_distribution.pdf"), plot= 
 
 ```{r coverage_qc}
 
-#| layout: [[45,-10, 45] ]
+#| layout-ncol: 2
 #| lightbox: true
 
 # coverage plot and heatmap) skipped in report 
@@ -356,7 +378,7 @@ ggsave( file.path(params$folder_prj, "Result","correlationMatrix.pdf"), plot=qc_
 
 
 
-## PCA 
+## Principal Component Analysis 
 
 
 ```{r pca_qc}
@@ -434,9 +456,11 @@ ggsave(file.path(params$folder_prj, "Result","PCA.pdf"), plot= tosave_pca,  dpi 
 
 Using MSqRob2 with the following formula `r params$formula` 
 
-LogFC threshold used : `r params$FC_thr`; threshold of statistical significance :  `r params$adjPval_thr`
+LogFC threshold used  abs(LogFC) >  `r params$FC_thr`; 
 
-The Proteins of Interest (POIs) are those that include statistically significant peptides.
+Threshold of statistical significance adj.Pval < `r params$adjPval_thr`
+
+`r if (all(params$poi == "")) { "No Proteins of Interest (POIs) are specified; POIs will include accessions with statistically significant peptides" } else {  paste0("Proteins of Interest (POIs) were specified: ", paste(params$poi, collapse = ", "))}`
 
 
 ```{r set_contrast_folder  }
@@ -455,17 +479,16 @@ for (a in   params$comparison_label ){
 ```
 
 
-## Comparison
 ```{r comparison}
 #| results: asis
 
 for (cmp in names(res_DE)) {
         log_info( paste0('  --  ',cmp)) 
 
-    cmp_label <- gsub('Condition','',cmp )
+    cmp_label <- gsub('Comparison','',cmp )
     cat( '### ', paste(cmp_label,sep=' '), '\n\n')
     cat ('This volcano plot summarizes the differential expression landscape in the comparison between the two groups \n\n')
-    cat(paste('POI : ', paste(res_DE[[cmp]]$POI, collapse = ' ' ),collapse = ' '))
+    #cat(paste('POI : ', paste(res_DE[[cmp]]$POI, collapse = ' ' ),collapse = ' '))
     
     dialipar::render_child(data = res_DE[[cmp]],
                  pe = NULL,

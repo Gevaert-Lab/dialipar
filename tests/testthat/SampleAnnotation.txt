@@ -1,4 +1,4 @@
-Run	Pipeline	Drug	Condition	Replicate	CondRep
+Run	Pipeline	Treatment	Condition	Replicate	CondRep
 F017128_1p_Ih19um_trapPM3_Neo__CMB-1934__Chloe_lipMSDIA_1	LiP	DMSO	DMSO_LiP	1	DMSO_LiP_1
 F017130_1p_Ih19um_trapPM3_Neo__CMB-1934__Chloe_lipMSDIA_2	LiP	Rapa	Rapa_LiP	1	Rapa_LiP_1
 F017132_1p_Ih19um_trapPM3_Neo__CMB-1934__Chloe_lipMSDIA_3	LiP	DMSO	DMSO_LiP	2	DMSO_LiP_2

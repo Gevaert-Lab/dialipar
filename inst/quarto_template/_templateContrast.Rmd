@@ -8,35 +8,47 @@ label_work <- gsub('Group','',label)
   label_work_f <- gsub(' ','_',label_work)
 
 log_info('  Vocano plot ....')
-ggplotly(data$volcano)
 
+data$volcano
 ggsave(file.path(path,paste0("Volcano_annotated",".pdf")) , plot=data$volcano2file , dpi = 600, height = 6, width = 10 )
 library(DT)
 log_info('  Top table rendering ....')
 
-DT::datatable( data$toptable %>% arrange(adjPval)  ,
+## filter only selected  
+
+table2viz <- data$toptable %>% select( precursor.Id, logFC, pval, adjPval,Protein.Group,Accession, Genes, pep_type, total_repeats, start , end , significance, interest )
+
+DT::datatable( table2viz %>% arrange(adjPval)  ,
              extensions = c('FixedColumns', 'Scroller'),
              options = list(fixedColumns = TRUE, scrollY = 400, scrollX = TRUE,
                             scroller = TRUE, dom = 'Bfrtip', autoWidth = TRUE
              ),
- ) 
- 
- #%>% formatStyle(
- #  'differential_expressed',
- #  target = 'row',
- #   textAlign = 'center',
- #   backgroundColor =  styleEqual(c('UP', 'DOWN'), c('#7fcdbb', '#fec44f')))%>% formatRound(columns=c('logFC'), digits=2) %>%
- # formatSignif(columns = c('pval', 'adjPval'), digits = 2) %>% formatString(perc_field, suffix='%')
+ ) %>%  formatRound(columns=c('logFC'), digits=2) %>%
+  formatSignif(columns = c('pval', 'adjPval'), digits = 2) 
 
 ttable <- data$toptable %>% arrange(adjPval) 
 write.csv2(ttable, file= file.path(path,paste0("Toptable",".csv")), row.names=FALSE )
 log_info('  Barcode plot rendering ....')
 
+#plotly_barcode <- lapply(data$barcode_plty, function(p) if (!is.null(p)) ggplotly(p))
 
-plotly_barcode <- lapply(data$barcode, function(p) if (!is.null(p)) ggplotly(p))
+htmltools::tagList(data$barcode_plty)
+log_info('  Barcode plot saving as pdf ....')
+log_info(paste(  data$POI, collapse= ' '))
 
-htmltools::tagList(plotly_barcode)
+log_info(paste( names(data$barcode_gg), collapse= ' '))
 
-#data$barcode
+for (a in names(data$barcode_gg)) {
+    log_info(a)
+   tryCatch({
+   ggsave(file.path(path,paste0("Barcode_",a,".pdf")) , plot=data$barcode_gg[[a]] , dpi = 600, height = 6, width = 6 )
+ message("Saved: ", file.path(path,paste0("Barcode_",a,".pdf")))
+    }, error = function(e) {
+      warning(sprintf("Failed to save %s: %s", paste0("Barcode_",a,".pdf") , e$message))
+    })
+}
+
+
+
 
 ```
