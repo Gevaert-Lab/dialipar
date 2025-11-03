@@ -12,11 +12,11 @@ utils::globalVariables(c(  "Run" , "R_FileName" ,
                            "AA_after","AA_last","AA_before","end",
                            "start","Protein.Sequence",
                            "total_repeats","precursor.Id", "adjPval", "logFC", "interest",
-                           "repeat_nr","pep_type","CondRep","Pipeline",
+                           "repeat_nr","pep_type","CondRep","Pipeline","samples","peptype",
                            "max_tier", "tier", "significance", "type",
                            "normPQ", "coverage", "median_abundance",".",
                            "pval", "completeness", "directionality",'tooltip_text',
                            "Proteotypic","value","deviation","df","se",
                           "Accession", "Tryptic","NonTryptic",'SemiTryptic','Condition','abundance_adjustment',
-                          'log_Precursor.Quantity','sample_shared_median','sample_scaling_factor','Drug','ID'))
+                          'log_Precursor.Quantity','sample_shared_median','sample_scaling_factor','Treatment','ID'))
 

@@ -58,11 +58,30 @@ Specify the template name via the `template_file` parameter in the `render_diali
 
 ---
 
+##  📦 Data Availability
+
+Lip Ms experiment processed with DIA-NN and Spectronaut can be found in [Pride](htts:// ). The raw files were searched with:
+
+-  [DIA-NN v.2.2](https://) with a library free approach (predicted spectral library). TC and LiP runs are included in only one parquet file. 
+-  [Spectronaut v.19](https://) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.
+-  [Spectronaut v.19](https://) with DIAdirect based on library free appraoch (predicted spectral library). TC and LiP runs are included in only one parquet file.
+
+In Pride, you can also find the relative experiment description file and the Human fasta file.
+
+
 ## 🚀 How to run an analysis
 
-1. Download DATA_TO_BE_DECIDED.zip (this should include the LiP‑MS experiment files and the experiment design file).
-2. Unzip it into a folder, for example `../path/dialipar_test/`.
-3. Use the code below (adjust paths as needed). Always use full paths for files and folders.
+1. Download the required data from Pride 
+
+- parquet files 
+- experiment design file 
+- fasta file 
+
+See section [Data Availability](#Data-Availability) for details.
+
+2. Put all the file into a folder, (e.g.`../path/dialipar_test/`).
+3. Use the code below (adjust paths as needed)
+✅ **Always use full paths for files and folders.**
 
 ```r
 report_target_folder <- "../path/dialipar_test/DIA-LiPA_result"
@@ -97,7 +116,10 @@ render_dialipa_report(
   report_filename = output_filename
 )
 ```
-
+💡*Note for Windows users:*: When specifying file paths, use double backslashes `(\\)` or forward slashes `(/)`.
+```r 
+params_start$design_file <- "C:\\Users\\Name\\dialipar_test\\SampleAnnotation.txt"
+```
 ---
 
 ## ⚙️ Input parameters
@@ -121,7 +143,7 @@ Parameters available to customize the DIA‑LiPA analysis and the generated HTML
 - **comparisons**: List of comparisons to test, including the variable name specified in the model (e.g., "ConditionA - ConditionB")
 - **comparison_label**: Human‑readable labels for comparisons (e.g., "GroupA - GroupB" → "A - B")
 
-In case both lip anff Tc runs are in just one parquet file, *input_file_tc* can be not specified. 
+In case both lip and Tc runs are in just one parquet file, *input_file_tc* can be not specified. 
 ---
 
 ## 📝 Experiment Design File (EDF)
@@ -130,14 +152,14 @@ The experiment design file is a tab‑separated text file and must include the f
 
 - Run: Raw file name without the file extension (mzML/.d/.raw)
 - Pipeline: "TC" for trypsin runs and "LiP" for LiP (semi‑tryptic) runs
-- Drug: Drug used in the experiment (e.g., Rapa/DMSO)
-- Condition: Experimental groups (used in the model)
+- Treatment: Drug used in the experiment (e.g., Rapa/DMSO, used in the model)
+- Condition: Experimental groups 
 - Replicate: Replicate identifier
 - CondRep: Combined label consisting of condition and replicate (e.g., DMSO_LiP_1)
 
 Example rows:
 
-| Run                                                                 | Pipeline | Drug | Condition   | Replicate | CondRep         |
+| Run                                                                 | Pipeline | Treatment | Condition   | Replicate | CondRep         |
 |----------------------------------------------------------------------|----------|------|-------------|-----------|------------------|
 | F017128_1p_Ih19um_trapPM3_Neo__CMB-1934__Chloe_lipMSDIA_1            | LiP      | DMSO | DMSO_LiP    | 1         | DMSO_LiP_1       |
 | F017130_1p_Ih19um_trapPM3_Neo__CMB-1934__Chloe_lipMSDIA_2            | LiP      | Rapa | Rapa_LiP    | 1         | Rapa_LiP_1       |

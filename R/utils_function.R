@@ -1096,9 +1096,37 @@ make_barplot <- function ( df, POI_ , colour_mapping_significance, colour_mappin
         strip.text = element_text(face = "bold"))
 }
 
-### to be added 
+
+#' @author Andrea Argentini
+#' @title Convert ggplot to interactive plotly with grouped legends
+#' @description
+#' Convert a ggplot2 object to an interactive plotly object (via ggplotly),
+#' remap trace names to significance group labels (based on the names of
+#' colour_mapping_significance) and assign legend groups so traces that
+#' represent the same significance category appear as a single legend entry.
+#' Only the first trace in each legend group is shown in the legend. The
+#' function also preserves ggplot title and subtitle in the plotly layout and
+#' allows adjusting title horizontal alignment and top margin. The ggplotly
+#' tooltip argument can be controlled with the `tooltip` parameter.
+#'
+#' @param ggp A ggplot object to convert (created with ggplot2).
+#' @param colour_mapping_significance A named character vector whose names are
+#'   significance category labels to match against ggplotly trace names. Only
+#'   the names are used for matching/legend grouping; values (colours) are not
+#'   used by this function but are commonly provided for downstream styling.
+#' @param title_center Numeric between 0 and 1 specifying the horizontal
+#'   position of the title in the plotly layout (0 = left, 0.5 = center,
+#'   1 = right). Default is 0.0 (left).
+#' @param top_margin Integer top margin in pixels to apply in the plotly
+#'   layout. Default is 70.
+#' @param tooltip Character scalar passed to ggplotly's tooltip argument
+#'   (e.g. "text", "x", "y", or a vector). Default is "text".
+#'
+#' @return A plotly object (list-like) produced by ggplotly with adjusted
+#'   trace legend groups and layout title/margin.
+#' @importFrom plotly ggplotly
+#' @importFrom magrittr %>%
 plotly_from_ggplot <- function(ggp, colour_mapping_significance, title_center = 0.0, top_margin = 70, tooltip = "text") {
-  # Requires: library(plotly)
   pp <- ggplotly(ggp, tooltip = tooltip)
 
   sig_names <- names(colour_mapping_significance)

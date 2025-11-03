@@ -9,6 +9,7 @@ Authors@R: c(
       role = c("aut", "cre")
     )
   )
+License : MIT + file LICENSE
 Description: More about what it does (maybe more than one line).
     Continuation lines should be indented.
 License: What license is it under?
@@ -40,7 +41,11 @@ Imports:
   knitr,
   assertthat,
   magrittr,
+  plotly,
   yaml
 Suggests: 
+    rmarkdown,
     testthat (>= 3.0.0),
+    xfun
 RoxygenNote: 7.3.2
+VignetteBuilder: knitr
