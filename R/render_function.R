@@ -442,7 +442,8 @@ render_dialipa_report <- function(params_report, template, report_folder, report
         output_format = "html",
         output_file = report_filename,
         execute_params = params_report,
-        quarto_args = c("--output-dir", path)
+        quarto_args = c(  "--no-clean",
+                         "--output-dir", path)
       )
     })
   }, error = function(e) {
