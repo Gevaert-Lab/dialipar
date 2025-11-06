@@ -10,11 +10,13 @@ Authors@R: c(
     )
   )
 License : MIT + file LICENSE
-Description: More about what it does (maybe more than one line).
-    Continuation lines should be indented.
-License: What license is it under?
+Description: dialipar is an R package that includes data analysis workflow for Lip-MS experiments acquired in DIA mode and searched both with DDA-based or predicted spectral library.
+URL: https://github.com/Gevaert-Lab/dialipar
+BugReports: https://github.com/Gevaert-Lab/dialipar/issues
+License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
+Depends:
+    R (>= 4.4)
 Imports:
   arrow,
   dplyr,

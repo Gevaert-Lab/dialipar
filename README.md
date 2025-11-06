@@ -17,15 +17,29 @@ Whether you’re new to LiP‑MS or a seasoned proteomics researcher, dialipar m
 
 ## 🛠️ Requirements
 
-1. R >= 4.4.0
-2. Install Bioconductor:
+1. **R**>= 4.4.0
+2. **Install Bioconductor**:
    - install.packages("BiocManager")
-3. Install PhantomJS for web screenshots (used by webshot):
+3. **Install PhantomJS for web screenshots** (used by webshot):
    - webshot::install_phantomjs()
-4. Install devtools:
+4. **Install devtools**:
    - install.packages("devtools")
-5. Install Quarto (version 1.6.43 or more):
+5. **Install Quarto** (version 1.6.43 or more):
    - Follow the instructions at https://quarto.org/docs/download/
+5. **Install Bioconductor dependencies**   
+    ``` r 
+        if (!requireNamespace("BiocManager", quietly = TRUE))
+            install.packages("BiocManager")
+ 
+        BiocManager::install(c("QFeatures", "SummarizedExperiment", "MsCoreUtils", "msqrob2"))
+   ```
+6. **Install CRAN dependencies**   
+    ``` r 
+      install.packages(c("arrow", "dplyr", "stringr","seqinr","withr",
+                     "tidyr",,"tibble","quarto","logger",'fs',
+                     'knitr','asserthat','magrittr',"yaml","plotly",
+                     "ggrepel","ggplot2","ggsci"))
+   ```
 
 ---
 
