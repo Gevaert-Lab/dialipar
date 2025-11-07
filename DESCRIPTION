@@ -9,7 +9,6 @@ Authors@R: c(
       role = c("aut", "cre")
     )
   )
-License : MIT + file LICENSE
 Description: dialipar is an R package that includes data analysis workflow for Lip-MS experiments acquired in DIA mode and searched both with DDA-based or predicted spectral library.
 URL: https://github.com/Gevaert-Lab/dialipar
 BugReports: https://github.com/Gevaert-Lab/dialipar/issues

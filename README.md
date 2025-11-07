@@ -6,7 +6,7 @@ Welcome to dialipar — a toolkit for analyzing LiP‑MS experiments. Built arou
 
 With a few simple steps you can:
 
-- Clean and preprocess your LiP‑MS data
+- Clean and preprocess your DIA LiP‑MS data
 - Run differential analysis to identify proteolytic changes
 - Visualize results with volcano plots, heatmaps, and QC metrics
 - Generate polished, shareable reports
@@ -74,13 +74,15 @@ Specify the template name via the `template_file` parameter in the `render_diali
 
 ##  📦 Data Availability
 
-Lip Ms experiment processed with DIA-NN and Spectronaut can be found in [Pride](htts:// ). The raw files were searched with:
+Lip Ms experiment processed with DIA-NN and Spectronaut can be found in [MassIVE](ftp://MSV000099740@massive-ftp.ucsd.edu/). The raw files were searched with:
 
--  [DIA-NN v.2.2](https://) with a library free approach (predicted spectral library). TC and LiP runs are included in only one parquet file. 
--  [Spectronaut v.19](https://) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.
--  [Spectronaut v.19](https://) with DIAdirect based on library free appraoch (predicted spectral library). TC and LiP runs are included in only one parquet file.
+-  [DIA-NN v.2.3 library free](/quant/Analysis_output/Workflows/library-free_diann_v2-3/input) (predicted spectral library). TC and LiP runs are included in only one parquet file. 
+-  [Spectronaut v.19 empirical spectral library ](/quant/Analysis_output/Workflows/empirical_spectronaut_v19/input) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.
+-  [Spectronaut v.19 library free](/quant/Analysis_output/Workflows/library-free_spectronaut_v19) (predicted spectral library). TC and LiP runs are included in only one parquet file.
 
-In Pride, you can also find the relative experiment description file and the Human fasta file.
+In the each folder, you can also find the relative experiment description and the Human fasta files.
+
+📢  **ATTENTION** 📢  : Manuscript is under revision, ftp has a temporary closed access limited only for the reviewers. For the time being, contact [us](andrea.argentini@vib-ugent.be) to access the data.
 
 
 ## 🚀 How to run an analysis
