@@ -74,7 +74,7 @@ Specify the template name via the `template_file` parameter in the `render_diali
 
 ##  📦 Data Availability
 
-Lip Ms experiment processed with DIA-NN and Spectronaut can be found in [MassIVE](ftp://MSV000099740@massive-ftp.ucsd.edu/). The raw files were searched with:
+Lip Ms experiment processed with DIA-NN and Spectronaut can be found in [MassIVE](<ftp://MSV000099740@massive-ftp.ucsd.edu/>). The raw files were searched with:
 
 -  [DIA-NN v.2.3 library free](/quant/Analysis_output/Workflows/library-free_diann_v2-3/input) (predicted spectral library). TC and LiP runs are included in only one parquet file. 
 -  [Spectronaut v.19 empirical spectral library ](/quant/Analysis_output/Workflows/empirical_spectronaut_v19/input) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.

@@ -18,14 +18,12 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r setup}
-library(dialipar)
-```
+
 
 ## DIA-LiPA Workflow 
 
 dialipar is an R package that includes  data analysis workflow for Lip-MS experiments acquired in DIA mode and searched both with DDA-based or predicted spectral library.
-The workflow (Fig ) include the following steps:
+The workflow includes the following steps:
 
 - Filtering and prepocessing 
 -  ON TC  run, data is aggrgated to protein level in order to compute scaling factor. 
@@ -45,6 +43,7 @@ Starting from a folder where you have all the input files `./path/dialipar_test/
 `report_target_folder` is the path where all the result are saved, `template_file` contains the template to use for the analysis (only Template.qmd is supported at the moment.).
 
 ```{r a}
+library(dialipar)
 report_target_folder <- "../path/dialipar_test/DIA-LiPA_result"
 template_file <- "Template_.qmd"
 output_filename <- "DIA-LiPA_report.html"
@@ -120,7 +119,7 @@ These parameters control the statistical modelling (`formula`,`contrast`,`compar
 Currently, the maximum number of POIs supported is 10.
 
 Dialipar supports only simple pairwise comparisons based on a single variable (e.g., Treatment).
-`comparisons` should include all contrasts to be tested in the analysis. Each comparison must be formatted as `variable + value` foe example  "TreatmentA - TreatmentB".  
+`comparisons` should include all contrasts to be tested in the analysis. Each comparison must be formatted as `variable + value` for example  "TreatmentA - TreatmentB".  
 
 ## Analysis Output Structure
 
