@@ -56,8 +56,275 @@ check_design_requirement <- function(df, required_cols) {
   return (result)
 }
 
+
+
+
+create_qfeat_  <- function(annotation_df, report_file1, report_file2 = NULL,fasta_ann){ 
+
+  ## maybe you have moved outside as global function 
+  calculatedSmallestGroupSize <- function(qf, i, facName){
+      se <- getWithColData(qf, i = i) #1.
+      fac <- colData(se)[[facName]]
+      rowData(qf[[i]])$smallestGroupSize <- 
+        (se %>%
+          assay()  %>% #2
+          Negate(is.na)()  #3
+        ) %*% model.matrix(~-1 + fac) %>% #4 
+        rowMins() #5
+      return(qf)
+    } 
+
+  tryCatch( expr = {
+    log_info('Annotation DIA-NN standardize column name ...')
+
+   qf <- readQFeatures(assayData = report_file1 %>% 
+                       filter(Precursor.Quantity > 4), 
+                     colData = annotation_df,
+                     quantCols = "Precursor.Quantity",
+                     runCol = "Run",
+                     fnames = "Precursor.Id")
+    
+    for (i in 1:length(qf)){
+           rowData(qf[[i]])$Proteotypic <- rowData(qf[[i]])$Protein.Group %>%
+                  grepl(pattern = ";") %>%
+                  ifelse(yes = 0, no = 1)
+    }
+
+    qf <-  qf %>%   filterFeatures(~ Q.Value <= 0.01 & #1.
+                          PG.Q.Value <= 0.01 &  #1. 
+                          Lib.Q.Value <= 0.01 & #1.
+                          Precursor.Id != "" & #2.
+                          Decoy == 0)
+    ## join assays  
+    lip_samples <- which(colData(qf)$Pipeline == "LiP")
+    tc_samples <- which(colData(qf)$Pipeline == "TC")
+
+    qf <- joinAssays(
+          x = qf,
+          i = lip_samples,
+          
+          name = "precursors_lip"
+          )
+    qf <- joinAssays(
+          x = qf,
+          i = tc_samples,
+          name = "precursors_tc"
+          )
+    
+    ## filtering Missing value using calculatedSmallestGroupSize
+
+    qf <- qf %>%  calculatedSmallestGroupSize(i = "precursors_lip", fac = "Treatment") 
+    qf <- qf %>%   calculatedSmallestGroupSize(i = "precursors_tc", fac = "Treatment")
+
+    qf <- filterFeatures(qf, i="precursors_tc", filter = ~ smallestGroupSize >= 2)
+
+   
+    #only pNA > 80%  not missingness
+    nObs <- 2
+    n <- ncol(qf[["precursors_lip"]])
+    qf <- filterNA(qf, i="precursors_lip", pNA=(n-nObs)/n)
+    return( list(error= '', status= 0,result =qf ))
+  },error = function(err){
+    print(paste("Annotation on DIANN :  ",err))
+    return( list(error= err, status= 1,result =NULL ))
+  } )
+}
+
+
+normalization_scaling_factor <- function(q_feat ){
+
+  # log_transform
+
+  #   1. Extracts the assay data 
+  # 2. Removes features with missing values
+  # 3. Subsequently takes the column wise median to obtain the sample based normalisation factor on the log2 scale.
+  # 4. Zero center the normalisation factors
+  # 5. Subtract these log2-norm factors from the intensities of each corresponding column of the assay data and store the result in the new assay peptides_norm. (We adopt the sweep function to the peptides_log assay of the spikein QFeatures object with as statistic the log2 normfactor STATS=nf the default function FUN = "-", MARGIN = 2 to substract the column wise log2 norm factor from each entry of the corresponding assay data)
+
+  medianNormCommonFeatures <- function(qf, i, name="normAssay"){
+  norm_factors_lip <- qf[[i]] %>%
+    assay() %>% #1.
+    na.exclude() %>% #2.
+    colMedians() #3.
+  norm_factors_lip <- norm_factors_lip - median(norm_factors_lip)
+    qf <- QFeatures::sweep(qf, #4. Subtract log2 norm factor column-by-column (MARGIN = 2)
+            MARGIN = 2, 
+            STATS = norm_factors_lip, 
+            i = i , 
+            name = name) 
+    return(qf)
+}
+tryCatch( expr = {
+  q_feat <- logTransform(q_feat, i = "precursors_lip", name="precursors_lip_log")
+  q_feat <- logTransform(q_feat, i = "precursors_tc", name="precursors_tc_log")
+
+  ## normalization step :
+
+  q_feat <- medianNormCommonFeatures(q_feat, i = "precursors_lip_log", name = "precursors_lip_norm")
+  q_feat <- medianNormCommonFeatures(q_feat, i = "precursors_tc_log", name = "precursors_tc_norm")
+    
+  ## tc Aggregation :
+  
+  q_feat <- aggregateFeatures(q_feat,
+                        i = "precursors_tc_norm",
+                        fcol = "Protein.Group",
+                        name = "proteins_tc",
+                        fun = MsCoreUtils::medianPolish,
+                        #fun = MsCoreUtils::robustSummary,
+                        na.rm = TRUE)
+   
+    return( list(error= '', status= 0,result =q_feat ))
+   
+ } ,error = function(err){
+     print(paste("normalization_scaling_factor:  ",err))
+     return( list(error= err, status= 1,result =q_feat ))
+   } )
+ }
+
+####----
+
+####----
+compute_usage <- function(q_feat ){
+
+calculate_usage_paired <- function(qf, i_lip = "precursors_lip_norm", i_tc = "proteins_tc", fcol_lip = "Protein.Group", fcol_tc = "Protein.Group", name = "precursors_lip_usage", match_cols_lip_to_tc = colnames(qf[[i_lip]]))
+{
+    qf <-  addAssay(qf, qf[[i_lip]], name = name) #1.
+    qf <- filterFeatures(qf, 
+                         i = name,
+                         filter = formula(
+                           paste0("~",fcol_tc, "%in% rowData(qf[[i_tc]])[[fcol_tc]]") #2. 
+                           )
+                         )
+
+    match_precursor_to_protein_FC <- match(rowData(qf[[name]])[[fcol_lip]],
+                                         rowData(qf[[i_tc]])[[fcol_tc]]) #3.
+    assay(qf[[name]]) <- assay(qf[[name]]) - assay(qf[[i_tc]])[match_precursor_to_protein_FC, match_cols_lip_to_tc] #4.
+      return(qf) 
+} 
+
+   tryCatch( expr = {
+     q_feat <- calculate_usage_paired(q_feat, match_cols_lip_to_tc = 1:ncol(q_feat[["precursors_lip_norm"]]))
+      return( list(error= err, status= 0,result =q_feat ))
+     },error = function(err){
+        print(paste("normalization_scaling_factor:  ",err))
+        return( list(error= err, status= 1,result =q_feat ))
+  } )
+ 
+}
+
+qc_precursor  <-function(q_feat){
+
+  
+classify_trypticity <- function(peptide, protein, start_pos) {
+ 
+  pep_len <- sapply(peptide, nchar)
+  end_pos <- start_pos + pep_len - 1
+ 
+    # Get surrounding amino acids
+  AA_before <- ifelse(start_pos > 1, 
+                    substr(protein, start_pos - 1, start_pos - 1), 
+                    "")
+  AA_after <- ifelse(end_pos < nchar(protein), 
+                    substr(protein, end_pos + 1, end_pos + 1), 
+                    "")
+  AA_first <- substr(peptide, 1, 1)
+  AA_last  <- substr(peptide, pep_len, pep_len)
+
+ 
+  # Classification
+  ambiguous <- is.na(protein) | is.na(start_pos)
+
+  nterm_tryptic <- (AA_before %in% c("K", "R", "") | (AA_before == "M" & start_pos==2))
+  cterm_tryptic <- (AA_last %in% c("K", "R") | AA_after=="")
+  return(
+    ifelse(ambiguous, 
+         "Ambiguous",
+         ifelse(nterm_tryptic & cterm_tryptic,
+                "Tryptic",
+                ifelse(nterm_tryptic | cterm_tryptic,
+                       "Semi-Tryptic",
+                       "Non-Tryptic")
+                )
+    )
+  )
+}
+  
+ calculate_coverage <- function(start, end, protein_length) {
+  require(IRanges)
+  #Checks 
+  if (is.na(protein_length)) return(NA)
+  startEnd <- cbind(start,end) |> na.omit()
+  if (nrow(startEnd) <1) return(NA)
+  covered <- IRanges(startEnd[,1], startEnd[,2]) |> 
+    coverage() |>
+    as.logical() |>
+    sum()
+  return(covered/protein_length)
+} 
+
+  
+pep_char <- function(table, prot_seq="Protein.Sequence", pep_seq="Stripped.Sequence")
+{
+  table <- table |>
+    mutate(missed_cleavages = get(pep_seq) |> 
+             str_count("[RK](?!(P|$))"), #1.
+         total_repeats = str_count(get(prot_seq), get(pep_seq)), #2.
+         tmp = str_locate(Protein.Sequence, Stripped.Sequence),
+         start = tmp[,1],
+         end = tmp[,2], #3.
+         pep_type = ifelse(
+           (total_repeats > 1) | is.na(total_repeats),
+           "Ambiguous",
+           classify_trypticity(
+             peptide = Stripped.Sequence, 
+             protein = Protein.Sequence, 
+             start_pos = start)), #4.
+         AA_last = str_sub(Stripped.Sequence, -1, -1) #5.
+           ) |> 
+    select(-tmp)
+}  
+  tryCatch( expr = { 
+
+ #### this should be checked  QFeatures::longFormat() is actually deprecated !  )
+ qcObj <- qf[,,c("precursors_lip_norm",
+                "precursors_tc_norm",
+                "precursors_lip_usage")] %>%
+  QFeatures::longFormat(colvars = c("Condition",
+                       "CondRep",
+                       "Treatment",
+                       "Replicate",
+                       "Pipeline"), 
+           rowvars= c("Precursor.Id", 
+                      "Protein.Group", 
+                      "Stripped.Sequence",
+                      "Precursor.Charge",
+                      "Genes")) %>%
+  data.frame() %>%
+  left_join(mapping, by = join_by(Protein.Group == Accession)) %>%
+  pep_char() %>%
+  mutate(
+    assay = as.factor(assay) %>%
+      case_match(
+        "precursors_lip_norm" ~ "LiP", 
+        "precursors_lip_usage" ~ "usage", 
+        "precursors_tc_norm" ~ "TC"),
+    CondRep = paste(Condition, assay, Replicate, sep="_"),
+    Condition = paste(Condition, assay, sep="_"))
+ 
+    return( list(error= err, status= 1,result = qcObj ))
+
+  },error = function(err){
+     print(paste("normalization_scaling_factor  ",err))
+     return( list(error= err, status= 1,result =q_feat ))
+   } )
+}
+
+
+
+
+
 #' @author Andrea Argentini
-#' @title annotate_diann
+#' @title annotate_diann_OLD
 #' @description Annotate and standardize DIA-NN reports: bind reports, join sample annotations,
 #' compute peptide-level metrics (missed cleavages, proteotypic), expand protein accessions,
 #' join FASTA-derived sequence information, compute peptide start/end positions and flanking AAs,
@@ -77,7 +344,7 @@ check_design_requirement <- function(df, required_cols) {
 #' @importFrom magrittr %>%
 #' @importFrom logger log_info
 
- annotate_diann <- function(annotation_df, report_file1, report_file2 = NULL,fasta_ann){
+ annotate_diann_OLD <- function(annotation_df, report_file1, report_file2 = NULL,fasta_ann){
 
      tryCatch( expr = {
     log_info('Annotation DIA-NN standardize column name ...')
@@ -175,7 +442,8 @@ app_b <- app_a %>%
                     log_info('Reading Tc and Lip from SEPARATE parquet files ...')
                     TC_report <- read_parquet(input_parquet_tc)
                     LiP_report <- read_parquet(input_parquet_lip)
-                  }else{
+                    stop('To BE FIXED ...') 
+                }else{
                     log_info('Reading both LiP and TC from ONE parquet file ...')
                     LiP_report <- read_parquet( input_parquet_lip)
                     TC_report <- NULL
@@ -187,6 +455,8 @@ app_b <- app_a %>%
                   # 
                   col_design_required <-  c('Run',	'Pipeline', 	'Treatment',	'Condition'	,'Replicate', 'CondRep')
                   checkdesign <- check_design_requirement(design , col_design_required)
+                  design <- design %>% rename(runCol = Run)
+                  
                   if (checkdesign$status == 1){
                     return( list(error= checkdesign$error , status= 1,lip =NULL ))
                     
@@ -312,7 +582,7 @@ app_b <- app_a %>%
 
 
 #' @author Andrea Argentini
-#' @title consensus_normalisation
+#' @title consensus_normalisation_OLD
 #' @description Function to calculate scaling factors for median normalisation based on precursors that are identified in every sample. Computes per-sample medians on shared precursors, derives scaling factors, and applies them to produce normalized precursor intensities.
 #' @param report Data frame or tibble containing at least the columns "CondRep", "Precursor.Id", and "Precursor.Quantity"
 #' @return A list with elements:
@@ -326,7 +596,7 @@ app_b <- app_a %>%
 
 
 
-consensus_normalisation <- function(report){
+consensus_normalisation_OLD <- function(report){
 
   tryCatch( expr = {
 

@@ -46,7 +46,6 @@ validate_filename <- function(filename) {
   if (grepl(invalid_chars, filename)) {
     stop("The file name contains invalid characters. Invalid characters are: <>:\"/\\|?*")
   }
-
   TRUE
 }
 
@@ -318,6 +317,7 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info ('DIA-LiPA start  ...')
 
   ## Drafting the  flow
+
   if (params_report$input_file_tc == ''){
       inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = FALSE, params_report$design_file)
 
@@ -328,31 +328,37 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   fastaproc <- read_fasta_ann(params_report$fasta_file )
   
   if (fastaproc$status == 1) stop(fastaproc$error)
-
+  browser()
   if (inputproc$diann_flag == TRUE) {
-      annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
+      annproc <- create_qfeat_(inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
+       norm_scaled <-   normalization_scaling_factor(annproc$result)
+    #annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
 
   }else{
       annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
 
   }
-  log_info( paste('Dim annotate_diann ', dim(annproc$result), collapse = ' '))
-  if (annproc$status == 1) stop(annproc$error)
-  consproc <- consensus_normalisation(annproc$result)
+  browser()
+
+  usage_ <-   compute_usage(norm_scaled$result) 
   
-  if (consproc$status == 1) stop(consproc$error)
-
-  LiP_annotated <- consproc$normalized %>%  filter(Pipeline=="LiP")
-  TC_annotated <-  consproc$normalized %>% filter( Pipeline=="TC")
-
-  log_info( paste('Dim LiP_annotated ', dim(LiP_annotated), collapse = ' '))
+  ## OLD TO be removed
+  # if (annproc$status == 1) stop(annproc$error)
+  # consproc <- consensus_normalisation(annproc$result)
   
-  log_info( paste('Dim TC_annotated ', dim(TC_annotated), collapse = ' '))
+  # if (consproc$status == 1) stop(consproc$error)
 
-  coverageproc_lip  <- calculate_coverages(LiP_annotated)
-  coverageproc_tc <- calculate_coverages(TC_annotated)
-  complete_report <- bind_rows(coverageproc_lip$result, coverageproc_tc$result)
-  log_info( paste('Dim complete_report ', dim(complete_report), collapse = ' '))
+  # LiP_annotated <- consproc$normalized %>%  filter(Pipeline=="LiP")
+  # TC_annotated <-  consproc$normalized %>% filter( Pipeline=="TC")
+
+  # log_info( paste('Dim LiP_annotated ', dim(LiP_annotated), collapse = ' '))
+  
+  # log_info( paste('Dim TC_annotated ', dim(TC_annotated), collapse = ' '))
+
+  # coverageproc_lip  <- calculate_coverages(LiP_annotated)
+  # coverageproc_tc <- calculate_coverages(TC_annotated)
+  # complete_report <- bind_rows(coverageproc_lip$result, coverageproc_tc$result)
+  # log_info( paste('Dim complete_report ', dim(complete_report), collapse = ' '))
 
   diann_col <- c('Run', 
       'Precursor.Id', 
