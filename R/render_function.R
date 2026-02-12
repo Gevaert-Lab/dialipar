@@ -319,40 +319,12 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   ## Drafting the  flow
 
   data_ <- process_dialipa_data(params_report = params_report)
-
-    render_quarto_template( data_list = data_$quarto_data,
-    template_name = 'pippo',
+  render_quarto_template( data_list = data_$result,
+    template_name = 'Template_WIP.qmd',
     report_fld = report_folder, 
-    report_fname= unique_output, 
+    report_fname= report_filename, 
     params_report = params_report
   )
-
-   
-  # if (params_report$input_file_tc == ''){
-  #     inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = FALSE, params_report$design_file)
-
-  # }else{
-  #         inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = TRUE, params_report$design_file)
-  # }
-  # #if (inputproc$status == 1) stop(inputproc$error)
-  # #fastaproc <- read_fasta_ann(params_report$fasta_file )
-  
-  # if (fastaproc$status == 1) stop(fastaproc$error)
-  # browser()
-  # if (inputproc$diann_flag == TRUE) {
-  #     annproc <- create_qfeat_(inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-  #      norm_scaled <-   normalization_scaling_factor(annproc$result)
-  #      #annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-
-  # }else{
-  #      ##spectronauts --> 
-  #     annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-
-  # }
-  # browser()
-
-  # usage_ <-   compute_usage(norm_scaled$result) 
-
   
   
   ## OLD TO be removed

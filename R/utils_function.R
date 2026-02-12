@@ -30,7 +30,7 @@
 #' @importFrom tools file_path_sans_ext
 render_quarto_template <- function(data_list, template_name, report_fld, report_fname, params_report) {
   # 1. Setup Temp Dir (Your current logic is good here)
-  template_source_folder <- system.file("quarto_template", package = "ntermreport")
+  template_source_folder <- system.file("quarto_template", package = "dialipar")
   if (template_source_folder == "") {
     stop("Template folder not found in the package.")
   }
@@ -126,6 +126,9 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
         }
         qc_ann <- qc_precursor_annotation(qf_final,fastaproc$result, type= analysis_type  )
         if (qc_ann$status == 1) stop(qc_ann$error)
+        #debug 
+        #saveRDS(qc_ann$result, './TEST_exp.Rds')
+        #stop('Debug')
         ## qc_ann$result go to data bag.
         if (analysis_type == 'paired') {
               log_info('Paired branch ...')
@@ -139,7 +142,10 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                     data= res_de_usage$q_feat  ,
                     df_anno = df_ann  ,
                     layer=  'precursors_lip_norm' ,
-                    layer_ = 'precursors_lip_usage' )               
+                    layer_ = 'precursors_lip_usage' )  
+              assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm",'precursors_lip_usage' )
+                # Subset to only these
+              qf_final <- res_de_usage$q_feat[, , assays_to_keep]
         }else{
            # upaired 
               log_info('Unpaired branch ...')
@@ -157,11 +163,17 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                     data= qf_unpair$qf  ,
                     df_anno = df_ann  ,
                     layer= 'precursors_lip_norm' ,
-                    layer_ = NULL)   
+                    layer_ = NULL)
+                qf_unpair$qf   
+                assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm" )
+                # Subset to only these
+                qf_final <- qf_unpair$qf[, , assays_to_keep]
         }
   
-        ## to be yet fixed
-        quarto_bag <- list(qc_data = qc_ann$result  )
+        ##  qc -> data for QC
+        ##  pe -> Qfeat subseted
+        quarto_bag <- list(qc_data = qc_ann$result,
+                          pe = qf_final  )
 
         return( list(error= '', status= 0,result =quarto_bag ))
  
@@ -200,7 +212,7 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
 
 
 build_df_result <- function (label, data , layer , layer_ = NULL , df_anno){
-       browser()
+       #browser()
  # --- 1. Process Assay A (e.g., Lip normalized) ---
       res_layer <-  rowData(data[[layer]])[[label]]
       res_layer_df <- as.data.frame(res_layer, check.names = FALSE) %>% 
