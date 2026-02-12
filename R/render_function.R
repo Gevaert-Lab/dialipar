@@ -318,29 +318,42 @@ render_dialipa_report <- function(params_report, template, report_folder, report
 
   ## Drafting the  flow
 
-  if (params_report$input_file_tc == ''){
-      inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = FALSE, params_report$design_file)
+  data_ <- process_dialipa_data(params_report = params_report)
 
-  }else{
-          inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = TRUE, params_report$design_file)
-  }
-  if (inputproc$status == 1) stop(inputproc$error)
-  fastaproc <- read_fasta_ann(params_report$fasta_file )
+    render_quarto_template( data_list = data_$quarto_data,
+    template_name = 'pippo',
+    report_fld = report_folder, 
+    report_fname= unique_output, 
+    params_report = params_report
+  )
+
+   
+  # if (params_report$input_file_tc == ''){
+  #     inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = FALSE, params_report$design_file)
+
+  # }else{
+  #         inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = TRUE, params_report$design_file)
+  # }
+  # #if (inputproc$status == 1) stop(inputproc$error)
+  # #fastaproc <- read_fasta_ann(params_report$fasta_file )
   
-  if (fastaproc$status == 1) stop(fastaproc$error)
-  browser()
-  if (inputproc$diann_flag == TRUE) {
-      annproc <- create_qfeat_(inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-       norm_scaled <-   normalization_scaling_factor(annproc$result)
-    #annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
+  # if (fastaproc$status == 1) stop(fastaproc$error)
+  # browser()
+  # if (inputproc$diann_flag == TRUE) {
+  #     annproc <- create_qfeat_(inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
+  #      norm_scaled <-   normalization_scaling_factor(annproc$result)
+  #      #annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
 
-  }else{
-      annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
+  # }else{
+  #      ##spectronauts --> 
+  #     annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
 
-  }
-  browser()
+  # }
+  # browser()
 
-  usage_ <-   compute_usage(norm_scaled$result) 
+  # usage_ <-   compute_usage(norm_scaled$result) 
+
+  
   
   ## OLD TO be removed
   # if (annproc$status == 1) stop(annproc$error)
@@ -360,126 +373,130 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   # complete_report <- bind_rows(coverageproc_lip$result, coverageproc_tc$result)
   # log_info( paste('Dim complete_report ', dim(complete_report), collapse = ' '))
 
-  diann_col <- c('Run', 
-      'Precursor.Id', 
-      'pep_type',
-      'total_repeats',
-      'repeat_nr',
-      'start',
-      'end',
-      'Modified.Sequence', 
-      'Stripped.Sequence', 
-      'Accession',
-      'Protein.Group',
-      'Protein.Names',
-      'Genes',
-      'pep_type',
-      'Proteotypic')
+  # diann_col <- c('Run', 
+  #     'Precursor.Id', 
+  #     'pep_type',
+  #     'total_repeats',
+  #     'repeat_nr',
+  #     'start',
+  #     'end',
+  #     'Modified.Sequence', 
+  #     'Stripped.Sequence', 
+  #     'Accession',
+  #     'Protein.Group',
+  #     'Protein.Names',
+  #     'Genes',
+  #     'pep_type',
+  #     'Proteotypic')
   
   
-  tcproc <- input_qf (coverageproc_tc$result , inputproc$design , columns_not_wide = diann_col, flag_tc = TRUE )
+  # tcproc <- input_qf (coverageproc_tc$result , inputproc$design , columns_not_wide = diann_col, flag_tc = TRUE )
 
-  tc_proc_scaling <- processing_tc_qfeat(tcproc$qf_pe, inputproc$design )
-  ## TODO hard oded 
-  LiP_annotated_corr <- 
-  coverageproc_lip$result %>% 
-      mutate( ID = paste(Protein.Group, Treatment),
-            abundance_adjustment = tc_proc_scaling$adj_scaling_df$abundance_adjustment[ match(ID,   tc_proc_scaling$adj_scaling_df$ID)] %>% 
-              ifelse(is.na(.), 0, .),
-            adjPQ = normPQ-abundance_adjustment ) 
+  # tc_proc_scaling <- processing_tc_qfeat(tcproc$qf_pe, inputproc$design )
+  # ## TODO hard oded 
+  # LiP_annotated_corr <- 
+  # coverageproc_lip$result %>% 
+  #     mutate( ID = paste(Protein.Group, Treatment),
+  #           abundance_adjustment = tc_proc_scaling$adj_scaling_df$abundance_adjustment[ match(ID,   tc_proc_scaling$adj_scaling_df$ID)] %>% 
+  #             ifelse(is.na(.), 0, .),
+  #           adjPQ = normPQ-abundance_adjustment ) 
 
-  res_lip <- input_qf ( LiP_annotated_corr , 
-                     inputproc$design , 
-                      columns_not_wide = diann_col, 
-                      flag_tc = FALSE )
-  res_de <-  msqrob_model(pe = res_lip$qf_p, params = params_report, layer = 'precursor' )
+  # res_lip <- input_qf ( LiP_annotated_corr , 
+  #                    inputproc$design , 
+  #                     columns_not_wide = diann_col, 
+  #                     flag_tc = FALSE )
+  # res_de <-  msqrob_model(pe = res_lip$qf_p, params = params_report, layer = 'precursor' )
 
-  res_DE_ <-  lapply(params_report$comparisons, dep_volcano_barcode,
-                    data= res_de$q_feat  ,
-                    params = params_report ,
-                    df_anno =LiP_annotated_corr ,
-                    layer= 'precursor' )
-  names(res_DE_) <-  params_report$comparison_label
+  # res_DE_ <-  lapply(params_report$comparisons, dep_volcano_barcode,
+  #                   data= res_de$q_feat  ,
+  #                   params = params_report ,
+  #                   df_anno =LiP_annotated_corr ,
+  #                   layer= 'precursor' )
+  # names(res_DE_) <-  params_report$comparison_label
 
-  ## -- template creation legacy code.
-
-  template_source_folder <- system.file("quarto_template", package = "dialipar")
-  if (template_source_folder == "") {
-    stop("Template folder not found in the package.")
-  }
+  ### add just new reder template function 
 
 
-  # Create a unique temporary working directory
-  temp_work_dir <- file.path(tempdir(), paste0("quarto_temp_", Sys.getpid()))
-  dir.create(temp_work_dir, recursive = TRUE, showWarnings = FALSE)
-  log_info('Temp folder created : {temp_work_dir}')
 
-  # Copy the entire template folder content to the temporary directory
-  # This copies all files and subfolders (e.g., resource folders with JS/CSS files)
-  success <- file.copy(from = template_source_folder,
-                       to = temp_work_dir,
-                       recursive = TRUE)
-  if (!success) {
-    stop("Failed to copy the template folder to the temporary directory.")
-  }
-  log_info('Copy template file ...done')
-  saveRDS(  coverageproc_lip$result , file.path(temp_work_dir,basename(template_source_folder), 'lip_comp.RDS'  ))
-  params_report$lip_rep <-   file.path(temp_work_dir,basename(template_source_folder),'lip_comp.RDS'  )
+  ## -- template creation legacy code. TO BE REMOVED
 
-  saveRDS(complete_report, file.path(temp_work_dir,basename(template_source_folder), 'complete_.RDS'  ))
-  params_report$complete_rep <-   file.path(temp_work_dir,basename(template_source_folder),'complete_.RDS'  )
+  # template_source_folder <- system.file("quarto_template", package = "dialipar")
+  # if (template_source_folder == "") {
+  #   stop("Template folder not found in the package.")
+  # }
 
-  saveRDS(res_DE_, file.path(temp_work_dir,basename(template_source_folder), 'resDE_.RDS'  ))
-  params_report$res_DE <-   file.path(temp_work_dir,basename(template_source_folder),'resDE_.RDS' )
-  log_info('Copy Rds results ...done')
-   # Construct the path to the copied template file in the temp directory.
-  # Assumes that the template file is directly inside the copied folder.
-  temp_template_path <- file.path(temp_work_dir, basename(template_source_folder), template)
-  if (!file.exists(temp_template_path)) {
-    stop("Template file not found in the temporary directory: ", temp_template_path)
-  }
 
-  path <- file.path(temp_work_dir, basename(template_source_folder))
+  # # Create a unique temporary working directory
+  # temp_work_dir <- file.path(tempdir(), paste0("quarto_temp_", Sys.getpid()))
+  # dir.create(temp_work_dir, recursive = TRUE, showWarnings = FALSE)
+  # log_info('Temp folder created : {temp_work_dir}')
 
-  tryCatch({
-    with_dir(path, {
-      quarto_render(
-        input = temp_template_path,
-        output_format = "html",
-        output_file = report_filename,
-        execute_params = params_report,
-        quarto_args = c(  "--no-clean",
-                         "--output-dir", path)
-      )
-    })
-  }, error = function(e) {
-    print("Error in Quarto rendering:")
-    print(e$message)
-    print("Cleaning Temp folder")
-    unlink(temp_work_dir, recursive = TRUE)
-    stop(e)
-  })
+  # # Copy the entire template folder content to the temporary directory
+  # # This copies all files and subfolders (e.g., resource folders with JS/CSS files)
+  # success <- file.copy(from = template_source_folder,
+  #                      to = temp_work_dir,
+  #                      recursive = TRUE)
+  # if (!success) {
+  #   stop("Failed to copy the template folder to the temporary directory.")
+  # }
+  # log_info('Copy template file ...done')
+  # saveRDS(  coverageproc_lip$result , file.path(temp_work_dir,basename(template_source_folder), 'lip_comp.RDS'  ))
+  # params_report$lip_rep <-   file.path(temp_work_dir,basename(template_source_folder),'lip_comp.RDS'  )
 
-  resource_folder_name <- paste0(tools::file_path_sans_ext(report_filename), "_files")
-  rendered_report_path <- file.path(path, report_filename)
+  # saveRDS(complete_report, file.path(temp_work_dir,basename(template_source_folder), 'complete_.RDS'  ))
+  # params_report$complete_rep <-   file.path(temp_work_dir,basename(template_source_folder),'complete_.RDS'  )
 
-  if (!dir.exists(report_folder)) {
-    dir.create(report_folder, recursive = TRUE)
-  }
+  # saveRDS(res_DE_, file.path(temp_work_dir,basename(template_source_folder), 'resDE_.RDS'  ))
+  # params_report$res_DE <-   file.path(temp_work_dir,basename(template_source_folder),'resDE_.RDS' )
+  # log_info('Copy Rds results ...done')
+  #  # Construct the path to the copied template file in the temp directory.
+  # # Assumes that the template file is directly inside the copied folder.
+  # temp_template_path <- file.path(temp_work_dir, basename(template_source_folder), template)
+  # if (!file.exists(temp_template_path)) {
+  #   stop("Template file not found in the temporary directory: ", temp_template_path)
+  # }
 
-  log_info('Copying rendered html report ...')
-  # Copy the rendered HTML report to the target folder
-  file.copy(from = rendered_report_path, to = file.path(report_folder, report_filename), overwrite = TRUE)
-  # If a resource folder was generated, copy it as well
-  temp_resource_path <- file.path(temp_work_dir, resource_folder_name)
-  if (dir.exists(temp_resource_path)) {
-    file.copy(from = temp_resource_path,
-              to = file.path(report_folder, resource_folder_name),
-              recursive = TRUE, overwrite = TRUE)
-  }
+  # path <- file.path(temp_work_dir, basename(template_source_folder))
 
-  log_info('Cleaning temp folder ...')
-  # Optionally, remove the temporary working directory to clean up
-  unlink(temp_work_dir, recursive = TRUE)
+  # tryCatch({
+  #   with_dir(path, {
+  #     quarto_render(
+  #       input = temp_template_path,
+  #       output_format = "html",
+  #       output_file = report_filename,
+  #       execute_params = params_report,
+  #       quarto_args = c(  "--no-clean",
+  #                        "--output-dir", path)
+  #     )
+  #   })
+  # }, error = function(e) {
+  #   print("Error in Quarto rendering:")
+  #   print(e$message)
+  #   print("Cleaning Temp folder")
+  #   unlink(temp_work_dir, recursive = TRUE)
+  #   stop(e)
+  # })
+
+  # resource_folder_name <- paste0(tools::file_path_sans_ext(report_filename), "_files")
+  # rendered_report_path <- file.path(path, report_filename)
+
+  # if (!dir.exists(report_folder)) {
+  #   dir.create(report_folder, recursive = TRUE)
+  # }
+
+  # log_info('Copying rendered html report ...')
+  # # Copy the rendered HTML report to the target folder
+  # file.copy(from = rendered_report_path, to = file.path(report_folder, report_filename), overwrite = TRUE)
+  # # If a resource folder was generated, copy it as well
+  # temp_resource_path <- file.path(temp_work_dir, resource_folder_name)
+  # if (dir.exists(temp_resource_path)) {
+  #   file.copy(from = temp_resource_path,
+  #             to = file.path(report_folder, resource_folder_name),
+  #             recursive = TRUE, overwrite = TRUE)
+  # }
+
+  # log_info('Cleaning temp folder ...')
+  # # Optionally, remove the temporary working directory to clean up
+  # unlink(temp_work_dir, recursive = TRUE)
   return (-1)
 }

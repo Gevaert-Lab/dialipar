@@ -1,4 +1,340 @@
 
+#' @title render_quarto_template
+#' 
+#' @description
+#' This internal function manages the heavy lifting of the reporting layer. It 
+#' creates a temporary sandbox, bundles all analysis results into a single 
+#' RDS "data bag," updates the Quarto parameters, and renders the report. 
+#' Finally, it cleans up the temporary directory and moves the output to 
+#' the designated folder.
+#'
+#' @param data_list A named list containing all data objects (tables, stats) 
+#' required by the Quarto template.
+#' @param template_name Character string. The name of the `.qmd` file located 
+#' within the package's `quarto_template` directory.
+#' @param report_fld Character string. The final destination directory for 
+#' the rendered report and its associated files.
+#' @param report_fname Character string. The name of the resulting HTML file 
+#' (e.g., "Nterm_Report.html").
+#' @param params_report A list of parameters to be passed to Quarto. This 
+#' function automatically appends a `data_path` element to this list.
+#'
+#' @return The function returns `NULL` invisibly. Its primary purpose is 
+#' the side effect of file creation and directory management.
+#' 
+#' @keywords internal
+#' 
+#' @importFrom quarto quarto_render
+#' @importFrom logger log_info log_error
+#' @importFrom withr with_dir
+#' @importFrom tools file_path_sans_ext
+render_quarto_template <- function(data_list, template_name, report_fld, report_fname, params_report) {
+  # 1. Setup Temp Dir (Your current logic is good here)
+  template_source_folder <- system.file("quarto_template", package = "ntermreport")
+  if (template_source_folder == "") {
+    stop("Template folder not found in the package.")
+  }
+
+  temp_work_dir <- file.path(tempdir(), paste0("quarto_temp_", Sys.getpid()))
+  dir.create(temp_work_dir, recursive = TRUE, showWarnings = FALSE)
+  log_info('Temp folder created : {temp_work_dir}')
+  success <- file.copy(from = template_source_folder,
+                       to = temp_work_dir,
+                       recursive = TRUE)
+   if (!success) {
+    stop("Failed to copy the template folder to the temporary directory.")
+  }
+  log_info('Copy Template file ...done')
+  
+  # 2. THE BIG CHANGE: Save everything into ONE file
+  data_rds_path <- file.path(temp_work_dir, "report_data.rds")
+  saveRDS(data_list, data_rds_path)
+  
+  log_info('Copy Rds Results ...done')
+  # 3. Add that path to parameters
+  params_report$data_path <- data_rds_path
+
+    # Construct the path to the copied template file in the temp directory.
+  # Assumes that the template file is directly inside the copied folder.
+  temp_template_path <- file.path(temp_work_dir, basename(template_source_folder), template_name)
+  if (!file.exists(temp_template_path)) {
+    stop("Template file not found in the temporary directory: ", temp_template_path)
+  }
+
+  path <- file.path(temp_work_dir, basename(template_source_folder))
+  
+    tryCatch({
+    withr::with_dir(path, {
+      quarto_render(
+        input = temp_template_path,
+        output_format = "html",
+        output_file = report_fname,
+        execute_params = params_report,
+        quarto_args = c( "--no-clean", "--output-dir", path)
+      )
+    })
+  }, error = function(e) {
+    log_error("Error in Quarto rendering: {e$message}")
+    unlink(temp_work_dir, recursive = TRUE)
+    stop(e)
+  })
+
+  resource_folder_name <- paste0(tools::file_path_sans_ext(report_fname), "_files")
+  rendered_report_path <- file.path(path, report_fname)
+
+  if (!dir.exists(report_fld)) {
+    dir.create(report_fld, recursive = TRUE)
+  }
+    log_info('Copying rendered html report ...')
+  # Copy the rendered HTML report to the target folder
+  file.copy(from = rendered_report_path, to = file.path(report_fld, report_fname), overwrite = TRUE)
+  # If a resource folder was generated, copy it as well
+  temp_resource_path <- file.path(temp_work_dir, resource_folder_name)
+  if (dir.exists(temp_resource_path)) {
+    file.copy(from = temp_resource_path,
+              to = file.path(report_fld, resource_folder_name),
+              recursive = TRUE, overwrite = TRUE)
+  }
+  log_info('Cleaning temp folder ...')
+  # Optionally, remove the temporary working directory to clean up
+  unlink(temp_work_dir, recursive = TRUE)
+  return(invisible(NULL))
+  
+}
+
+
+process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
+      
+  fastaproc <- read_fasta_ann(params_report$fasta_file )
+      input_data <- parse_input(params_report$input_file_tc, 
+                          params_report$input_file_lip,  
+                          dual = FALSE, 
+                          params_report$design_file)
+
+        qf_base <- create_qfeat_(input_data$design, input_data$lip, input_data$tc)
+        if (qf_base$status == 1) stop(qf_base$error)
+
+        qf_norm <- normalization_scaling_factor(qf_base$result)
+        if (qf_norm$status == 1) stop(qf_norm$error) 
+
+        qf_final <- qf_norm$result 
+
+        if (analysis_type == 'paired') {
+            usage_res <- compute_usage(qf_norm$result) 
+            if (usage_res$status == 1) stop(usage_res$error)
+            qf_final <- usage_res$result
+        }
+        qc_ann <- qc_precursor_annotation(qf_final,fastaproc$result, type= analysis_type  )
+        if (qc_ann$status == 1) stop(qc_ann$error)
+        ## qc_ann$result go to data bag.
+        if (analysis_type == 'paired') {
+              log_info('Paired branch ...')
+              res_de_norm <-  msqrob_model(pe = qf_final, params = params_report, layer = 'precursors_lip_norm' )
+              if (res_de_norm$status == 1) stop(res_de_norm$error)
+              res_de_usage <-  msqrob_model(pe = res_de_norm$q_feat, params = params_report, layer = 'precursors_lip_usage' )
+              if (res_de_usage$status == 1) stop(res_de_usage$error)
+              df_ann <-  as.data.frame(rowData(res_de_usage$q_feat[["precursors_lip_norm"]])[c("Precursor.Id", "Protein.Group", "Genes", "Proteotypic", "Stripped.Sequence")])
+              test_ <-  lapply(params_report$comparisons, 
+                    build_df_result,
+                    data= res_de_usage$q_feat  ,
+                    df_anno = df_ann  ,
+                    layer=  'precursors_lip_norm' ,
+                    layer_ = 'precursors_lip_usage' )               
+        }else{
+           # upaired 
+              log_info('Unpaired branch ...')
+                a <-  msqrob_model(pe = qf_final, params = params_report, layer = 'precursors_lip_norm' )
+                if (a$status == 1) stop(a$error)
+                b  <-  msqrob_model(pe = a$q_feat, params = params_report, layer = 'proteins_tc' )
+                if (b$status == 1) stop(b$error)  
+                qf_unpair <- calculate_lip_usage(b$q_feat, i_lip = "precursors_lip_norm", 
+                                          i_tc = "proteins_tc",
+                                           contrasts = colnames(b$contr_exp))
+                if (qf_unpair$status == 1) stop(qf_unpair$error)  
+                df_ann <-  as.data.frame(rowData(qf_unpair$qf[["precursors_lip_norm"]])[c("Precursor.Id", "Protein.Group", "Genes", "Proteotypic", "Stripped.Sequence")])
+                test_ <-  lapply(params_report$comparisons, 
+                    build_df_result,
+                    data= qf_unpair$qf  ,
+                    df_anno = df_ann  ,
+                    layer= 'precursors_lip_norm' ,
+                    layer_ = NULL)   
+        }
+  
+        ## to be yet fixed
+        quarto_bag <- list(qc_data = qc_ann$result  )
+
+        return( list(error= '', status= 0,result =quarto_bag ))
+ 
+  
+}
+
+#' Build Result Data Frame for a Single Contrast
+#'
+#' Internal helper function to extract, format, and standardize differential expression 
+#' results for a specific contrast. It handles both "paired" (usage in a separate assay) 
+#' and "unpaired" (usage calculated within the same assay) workflows by unifying column names.
+#'
+#' @param label \code{character(1)}. The name of the contrast to extract (e.g., "TreatmentA - TreatmentB").
+#' @param data A \code{QFeatures} object containing the statistical results in its \code{rowData}.
+#' @param layer \code{character(1)}. The name of the main assay (usually the normalized LiP assay) 
+#'   containing the protein-level or peptide-level fold changes.
+#' @param layer_ \code{character(1)} or \code{NULL}. The name of the secondary assay (usually the 
+#'   Usage assay). 
+#'   \itemize{
+#'     \item If provided (Paired analysis), results are fetched from this layer and joined.
+#'     \item If \code{NULL} (Unpaired analysis), the function looks for usage statistics 
+#'           (e.g., \code{pval_usage}) inside \code{layer} and renames them to match 
+#'           the standard format (\code{usage_pval}).
+#'   }
+#' @param df_anno \code{data.frame}. A data frame containing annotation metadata. Must contain 
+#'   a column named \code{"Precursor.Id"} for joining.
+#'
+#' @return A \code{list} containing a single element \code{df}, which is the combined 
+#'   data frame of statistics and annotations for the requested contrast.
+#' 
+#' @importFrom SummarizedExperiment rowData
+#' @importFrom dplyr rename rename_with left_join mutate full_join
+#' @importFrom tibble rownames_to_column
+#' @importFrom stringr str_remove fixed
+#' @keywords internal
+
+
+build_df_result <- function (label, data , layer , layer_ = NULL , df_anno){
+       browser()
+ # --- 1. Process Assay A (e.g., Lip normalized) ---
+      res_layer <-  rowData(data[[layer]])[[label]]
+      res_layer_df <- as.data.frame(res_layer, check.names = FALSE) %>% 
+      rownames_to_column(var = "Precursor.Id") 
+# --- 2. Process Assay B (Optional, e.g., Protein/Norm) ---
+  if (!is.null(layer_)) {
+     ## usage for paired 
+      res_layer_ <- rowData(data[[layer_]])[[label]]
+      res_layer__df <- as.data.frame(res_layer_, check.names = FALSE) %>% 
+      rownames_to_column(var = "Precursor.Id") %>% 
+      rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -Precursor.Id)
+      browser()
+    # Merge A and B
+    res_combined <- full_join(res_layer_df, res_layer__df, by = "Precursor.Id")  
+    }else {
+    # === UNPAIRED BRANCH ===
+    # Usage is already in res_layer_df, but with suffixes (_usage).
+    # We rename them to match the paired prefixes (usage_).
+    res_combined <- res_layer_df %>%
+      dplyr::rename(
+        usage_logFC   = usage,            # 'usage' is the logFC
+        usage_pval    = pval_usage,
+        usage_adjPval = adjPval_usage,
+        usage_se      = se_usage,
+        usage_t       = t_usage,
+        usage_df      = df_usage
+      )
+  }
+  # --- 3. Final Join with Annotation ---
+  final_df <- res_combined %>% 
+    left_join(df_anno, by = "Precursor.Id") %>%
+    mutate(contrast = label) # Good for downstream filtering
+  
+  return(list( df = final_df))
+
+}
+
+
+#' Calculate LiP-MS Usage (Corrected logFC)
+#'
+#' This function corrects LiP peptide log-fold changes (logFC) by subtracting the 
+#' total protein (TC) logFC. It performs error propagation for standard errors 
+#' and re-calculates p-values for the "usage" (the peptide change relative to 
+#' the protein change).
+#'
+#' @param qf A \code{QFeatures} object.
+#' @param i_lip \code{character(1)}: The name of the assay containing LiP-level models.
+#' @param i_tc \code{character(1)}: The name of the assay containing TC-level models.
+#' @param contrasts \code{character()}: A vector of contrast names (e.g., "A - B") 
+#'   that exist in the \code{rowData} of both assays.
+#' @param fcol_lip \code{character(1)}: Column in \code{rowData(qf[[i_lip]])} 
+#'   used for matching to proteins. Default is "Protein.Group".
+#' @param fcol_tc \code{character(1)}: Column in \code{rowData(qf[[i_tc]])} 
+#'   identifying proteins. Default is "Protein.Group".
+#' @param satterthwaite \code{logical(1)}: Whether to use the Satterthwaite 
+#'   approximation for degrees of freedom. Default is \code{FALSE}.
+#'
+#' @return A \code{QFeatures} object with updated \code{rowData} in the \code{i_lip} assay.
+#' @export
+#'
+#' @importFrom SummarizedExperiment rowData
+#' @importFrom stats pt p.adjust
+
+calculate_lip_usage <- function(qf, i_lip, i_tc, contrasts, 
+                               fcol_lip = "Protein.Group", 
+                               fcol_tc = "Protein.Group",  
+                               satterthwaite = FALSE) {
+  
+   tryCatch({
+    log_info('Unparied compute usage ...')
+  # 1. Match precursors to proteins
+  # This creates an index mapping each LiP row to its corresponding TC row
+    match_idx <- match(SummarizedExperiment::rowData(qf[[i_lip]])[[fcol_lip]],
+                     SummarizedExperiment::rowData(qf[[i_tc]])[[fcol_tc]])
+  
+  for (contrast in contrasts) {
+    # 2.1. Extract TC results for this contrast
+      log_info('Extract TC results  ...')
+    res_tc <- SummarizedExperiment::rowData(qf[[i_tc]])[[contrast]]
+    
+    if (is.null(res_tc)) {
+      warning(paste("Contrast", contrast, "not found in TC assay. Skipping."))
+      next
+    }
+    
+    # Rename TC columns to avoid collisions
+    colnames(res_tc) <- paste0(colnames(res_tc), "_tc")
+    
+    # 2.2. Align TC results to the LiP precursors
+    # We subset the TC results using the match index
+    log_info('Align TC results to the LiP precursors  ...')
+    aligned_tc <- res_tc[match_idx, , drop = FALSE]
+    
+    # 2.3. Combine and calculate usage
+    # We convert to a standard data frame temporarily for easier calculation
+    res_lip <- SummarizedExperiment::rowData(qf[[i_lip]])[[contrast]]
+    combined <- cbind(res_lip, aligned_tc)
+    
+    # Calculation logic
+     log_info('Compute usage  logFC, se, df ...')
+    combined$usage <- combined$logFC - combined$logFC_tc
+    combined$se_usage <- sqrt(combined$se^2 + combined$se_tc^2)
+    combined$t_usage <- combined$usage / combined$se_usage
+    
+    # Degrees of freedom calculation
+    if (satterthwaite) {
+      combined$df_usage <- (combined$se^2 + combined$se_tc^2)^2 / 
+        (combined$se^4/combined$df + combined$se_tc^4/combined$df_tc)
+    } else {
+      combined$df_usage <- combined$df
+    }
+    
+    # P-value and FDR
+    combined$pval_usage <- stats::pt(abs(combined$t_usage), 
+                                     df = combined$df_usage, 
+                                     lower.tail = FALSE) * 2
+    combined$adjPval_usage <- stats::p.adjust(combined$pval_usage, method = "fdr")
+    
+    # Update the rowData of the original object
+    log_info('Update rowData with usage corrected  ...')
+
+    SummarizedExperiment::rowData(qf[[i_lip]])[[contrast]] <- combined
+  }
+
+  return( list(error= '', status= 0, qf =qf ))
+  }, error = function(e) {
+        print(paste("Unpaired calculate_lip_usage  :  ",err))
+        return( list(error= err, status= 1, qf =NULL ))
+
+  })
+}
+
+##-----------------
+
 #' @author Andrea Argentini
 #' @title check_design_requirement
 #' @description This function performs the following checks on the design file:
@@ -57,163 +393,294 @@ check_design_requirement <- function(df, required_cols) {
 }
 
 
+#' Create QFeatures Object from Proteomics Reports
+#'
+#' @title create_qfeat_
+#' 
+#' @description 
+#' Converts raw data frames into a QFeatures object, calculates group-specific 
+#' detection heuristics, and performs initial quality filtering.
+#'
+#' @param annotation_df A data frame containing sample metadata (colData).
+#' @param report_file1 A data frame containing quantitative proteomics data.
+#' @param report_file2 Optional; secondary report file (default is NULL).
+#'
+#' @return A list with status, error message, and the resulting QFeatures object.
+#'
+#' @import QFeatures
+#' @importFrom SummarizedExperiment assay colData rowData
+#' @importFrom MultiAssayExperiment getWithColData
+#' @importFrom dplyr filter
+#' @importFrom magrittr %>%
+#' @importFrom rlang .data
+#' @importFrom stats model.matrix
+#' @importFrom matrixStats rowMins
+#' @importFrom logger log_info
+#'
+create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL) {
 
+ calculatedSmallestGroupSize <- function(qf, i, facName){
+    se <- MultiAssayExperiment::getWithColData(qf, i = i) #1.
+    fac <- SummarizedExperiment::colData(se)[[facName]]
+    SummarizedExperiment::rowData(qf[[i]])$smallestGroupSize <- 
+      (se %>%
+         SummarizedExperiment::assay() %>% #2
+         Negate(is.na)()  #3
+      ) %*% stats::model.matrix(~-1 + fac) %>% #4 
+      matrixStats::rowMins() #5
+    return(qf)
+  }
 
-create_qfeat_  <- function(annotation_df, report_file1, report_file2 = NULL,fasta_ann){ 
+  tryCatch(expr = {
+    log_info('Importing data into QFeatures ...')
 
-  ## maybe you have moved outside as global function 
-  calculatedSmallestGroupSize <- function(qf, i, facName){
-      se <- getWithColData(qf, i = i) #1.
-      fac <- colData(se)[[facName]]
-      rowData(qf[[i]])$smallestGroupSize <- 
-        (se %>%
-          assay()  %>% #2
-          Negate(is.na)()  #3
-        ) %*% model.matrix(~-1 + fac) %>% #4 
-        rowMins() #5
-      return(qf)
-    } 
+    # 1. Initial Import and subsetting
+    # Filter using .data to avoid global variable warnings
+    input_data <- report_file1 %>%
+      dplyr::filter(.data$Precursor.Quantity > 4)
 
-  tryCatch( expr = {
-    log_info('Annotation DIA-NN standardize column name ...')
+    qf <- QFeatures::readQFeatures(
+      assayData = input_data,
+      colData = annotation_df,
+      quantCols = "Precursor.Quantity",
+      runCol = "Run",
+      fnames = "Precursor.Id"
+    )
 
-   qf <- readQFeatures(assayData = report_file1 %>% 
-                       filter(Precursor.Quantity > 4), 
-                     colData = annotation_df,
-                     quantCols = "Precursor.Quantity",
-                     runCol = "Run",
-                     fnames = "Precursor.Id")
-    
-    for (i in 1:length(qf)){
-           rowData(qf[[i]])$Proteotypic <- rowData(qf[[i]])$Protein.Group %>%
-                  grepl(pattern = ";") %>%
-                  ifelse(yes = 0, no = 1)
+    # 2. Add Proteotypic info
+    for (i in seq_along(qf)) {
+      rd <- SummarizedExperiment::rowData(qf[[i]])
+      rd$Proteotypic <- ifelse(grepl(";", rd$Protein.Group), 0, 1)
+      SummarizedExperiment::rowData(qf[[i]]) <- rd
     }
 
-    qf <-  qf %>%   filterFeatures(~ Q.Value <= 0.01 & #1.
-                          PG.Q.Value <= 0.01 &  #1. 
-                          Lib.Q.Value <= 0.01 & #1.
-                          Precursor.Id != "" & #2.
-                          Decoy == 0)
-    ## join assays  
-    lip_samples <- which(colData(qf)$Pipeline == "LiP")
-    tc_samples <- which(colData(qf)$Pipeline == "TC")
+    log_info('Filtering Qvalue/PG.Qvalue < 0.01 ...')
 
-    qf <- joinAssays(
-          x = qf,
-          i = lip_samples,
-          
-          name = "precursors_lip"
-          )
-    qf <- joinAssays(
-          x = qf,
-          i = tc_samples,
-          name = "precursors_tc"
-          )
-    
-    ## filtering Missing value using calculatedSmallestGroupSize
+    # filterFeatures uses a formula interface; it handles its own variable scope
+    qf <- QFeatures::filterFeatures(qf, ~ Q.Value <= 0.01 & 
+                                      PG.Q.Value <= 0.01 & 
+                                      Lib.Q.Value <= 0.01 & 
+                                      Precursor.Id != "" & 
+                                      Decoy == 0)
 
-    qf <- qf %>%  calculatedSmallestGroupSize(i = "precursors_lip", fac = "Treatment") 
-    qf <- qf %>%   calculatedSmallestGroupSize(i = "precursors_tc", fac = "Treatment")
+    # 3. Join assays based on Pipeline metadata
+    lip_samples <- which(SummarizedExperiment::colData(qf)$Pipeline == "LiP")
+    tc_samples <- which(SummarizedExperiment::colData(qf)$Pipeline == "TC")
 
-    qf <- filterFeatures(qf, i="precursors_tc", filter = ~ smallestGroupSize >= 2)
+    log_info('Joining Tc and Lip samples ...')
+    qf <- QFeatures::joinAssays(x = qf, i = lip_samples, fcol = "Precursor.Id", name = "precursors_lip")
+    qf <- QFeatures::joinAssays(x = qf, i = tc_samples,  fcol = "Precursor.Id", name = "precursors_tc")
 
-   
-    #only pNA > 80%  not missingness
+    log_info('Filtering TC based on smallest group heuristic ...')
+    qf <- calculatedSmallestGroupSize(qf, i = "precursors_lip", facName = "Treatment")
+    qf <- calculatedSmallestGroupSize(qf, i = "precursors_tc", facName = "Treatment")
+
+    # Filter for precursors present in at least 2 replicates per group
+    qf <- QFeatures::filterFeatures(qf, ~ smallestGroupSize >= 2, i = "precursors_tc")
+
+    log_info('Filtering Lip with precursor > 80% detection ...')
     nObs <- 2
     n <- ncol(qf[["precursors_lip"]])
-    qf <- filterNA(qf, i="precursors_lip", pNA=(n-nObs)/n)
-    return( list(error= '', status= 0,result =qf ))
-  },error = function(err){
-    print(paste("Annotation on DIANN :  ",err))
-    return( list(error= err, status= 1,result =NULL ))
-  } )
+    qf <- QFeatures::filterNA(qf, i = "precursors_lip", pNA = (n - nObs) / n)
+
+    return(list(error = '', status = 0, result = qf))
+    
+  }, error = function(err) {
+    msg <- conditionMessage(err)
+    message(paste("Creating Qfeat Error: ", msg))
+    return(list(error = msg, status = 1, result = NULL))
+  })
 }
 
+
+
+#' Normalize and Aggregate Proteomics Data
+#'
+#' @title Log-Transformation, Median Normalization, and Protein Aggregation
+#' 
+#' @description 
+#' Performs log2 transformation on LiP and TC assays, calculates sample-based 
+#' normalization factors using common features, and aggregates TC precursors 
+#' to the protein level.
+#' 
+#' The normalization scaling factor is calculated by:
+#' \enumerate{
+#'   \item Extracting the assay data.
+#'   \item Removing features with missing values.
+#'   \item Calculating column-wise medians to obtain log2 scale normalization factors.
+#'   \item Zero-centering the normalization factors.
+#'   \item Subtracting factors from intensities using \code{QFeatures::sweep}.
+#' }
+#'
+#' @param q_feat A \code{QFeatures} object containing "precursors_lip" and "precursors_tc" assays.
+#'
+#' @return A list with the following components:
+#' \itemize{
+#'   \item \code{error}: Character string containing error messages, if any.
+#'   \item \code{status}: Integer (0 for success, 1 for error).
+#'   \item \code{result}: The updated \code{QFeatures} object.
+#' }
+#'
+#' @import QFeatures
+#' @importFrom SummarizedExperiment assay
+#' @importFrom matrixStats colMedians
+#' @importFrom MsCoreUtils medianPolish
+#' @importFrom logger log_info
+#' @importFrom rlang .data
+#' @importFrom stats median na.exclude
+#'
 
 normalization_scaling_factor <- function(q_feat ){
 
   # log_transform
 
-  #   1. Extracts the assay data 
+  # 1. Extracts the assay data 
   # 2. Removes features with missing values
   # 3. Subsequently takes the column wise median to obtain the sample based normalisation factor on the log2 scale.
   # 4. Zero center the normalisation factors
   # 5. Subtract these log2-norm factors from the intensities of each corresponding column of the assay data and store the result in the new assay peptides_norm. (We adopt the sweep function to the peptides_log assay of the spikein QFeatures object with as statistic the log2 normfactor STATS=nf the default function FUN = "-", MARGIN = 2 to substract the column wise log2 norm factor from each entry of the corresponding assay data)
 
-  medianNormCommonFeatures <- function(qf, i, name="normAssay"){
-  norm_factors_lip <- qf[[i]] %>%
-    assay() %>% #1.
-    na.exclude() %>% #2.
-    colMedians() #3.
-  norm_factors_lip <- norm_factors_lip - median(norm_factors_lip)
-    qf <- QFeatures::sweep(qf, #4. Subtract log2 norm factor column-by-column (MARGIN = 2)
-            MARGIN = 2, 
-            STATS = norm_factors_lip, 
-            i = i , 
-            name = name) 
-    return(qf)
-}
-tryCatch( expr = {
-  q_feat <- logTransform(q_feat, i = "precursors_lip", name="precursors_lip_log")
-  q_feat <- logTransform(q_feat, i = "precursors_tc", name="precursors_tc_log")
-
-  ## normalization step :
-
-  q_feat <- medianNormCommonFeatures(q_feat, i = "precursors_lip_log", name = "precursors_lip_norm")
-  q_feat <- medianNormCommonFeatures(q_feat, i = "precursors_tc_log", name = "precursors_tc_norm")
+  # Internal helper to calculate median normalization factors
+  medianNormCommonFeatures <- function(qf, i, name = "normAssay") {
+    # 1. Extract assay, 2. Remove missing, 3. Calculate column medians
+    m <- SummarizedExperiment::assay(qf[[i]])
+    m_complete <- stats::na.exclude(m)
     
-  ## tc Aggregation :
-  
-  q_feat <- aggregateFeatures(q_feat,
-                        i = "precursors_tc_norm",
-                        fcol = "Protein.Group",
-                        name = "proteins_tc",
-                        fun = MsCoreUtils::medianPolish,
-                        #fun = MsCoreUtils::robustSummary,
-                        na.rm = TRUE)
-   
-    return( list(error= '', status= 0,result =q_feat ))
-   
- } ,error = function(err){
-     print(paste("normalization_scaling_factor:  ",err))
-     return( list(error= err, status= 1,result =q_feat ))
-   } )
- }
+    norm_factors <- matrixStats::colMedians(m_complete)
+    
+    # 4. Zero-center the normalization factors
+    norm_factors <- norm_factors - stats::median(norm_factors)
+    
+    # 5. Sweep out the factors
+    qf <- QFeatures::sweep(
+      qf, 
+      MARGIN = 2, 
+      STATS = norm_factors, 
+      i = i, 
+      name = name,
+      FUN = "-"
+    )
+    return(qf)
+  }
+
+  tryCatch(
+    expr = {
+      log_info('Log2 transformation TC and Lip ...')
+      q_feat <- QFeatures::logTransform(q_feat, i = "precursors_lip", name = "precursors_lip_log")
+      q_feat <- QFeatures::logTransform(q_feat, i = "precursors_tc", name = "precursors_tc_log")
+
+      log_info('Normalization features based on median common features ...')
+      q_feat <- medianNormCommonFeatures(q_feat, i = "precursors_lip_log", name = "precursors_lip_norm")
+      q_feat <- medianNormCommonFeatures(q_feat, i = "precursors_tc_log", name = "precursors_tc_norm")
+
+      log_info('TC aggregation protein level ...')
+      # Aggregates precursors to protein level using Median Polish
+      q_feat <- QFeatures::aggregateFeatures(
+        q_feat,
+        i = "precursors_tc_norm",
+        fcol = "Protein.Group",
+        name = "proteins_tc",
+        fun = MsCoreUtils::medianPolish,
+        na.rm = TRUE
+      )
+
+      return(list(error = '', status = 0, result = q_feat))
+    },
+    error = function(err) {
+      msg <- conditionMessage(err)
+      message(paste("normalization_scaling_factor Error: ", msg))
+      # Return the object in its current state even if error occurs
+      return(list(error = msg, status = 1, result = q_feat))
+    }
+  )
+}
 
 ####----
 
-####----
+#' Compute LiP-MS Usage (Accessibility)
+#'
+#' @title compute_usage
+#' 
+#' @description 
+#' This function calculates the relative peptide usage by subtracting the 
+#' corresponding protein-level abundance (Total Control) from normalized 
+#' peptide intensities. This step adjusts for changes in total protein expression 
+#' to isolate changes in protein conformation or accessibility.
+#'
+#' @param q_feat A \code{QFeatures} object.
+#'
+#' @return A list with the following components:
+#' \itemize{
+#'   \item \code{error}: Character string containing error messages, if any.
+#'   \item \code{status}: Integer (0 for success, 1 for error).
+#'   \item \code{result}: The updated \code{QFeatures} object containing the "precursors_lip_usage" assay.
+#' }
+#'
+#' @import QFeatures
+#' @importFrom SummarizedExperiment assay rowData
+#' @importFrom rlang .data
+#' @importFrom logger log_info
+#' @importFrom methods as
+#'
 compute_usage <- function(q_feat ){
 
-calculate_usage_paired <- function(qf, i_lip = "precursors_lip_norm", i_tc = "proteins_tc", fcol_lip = "Protein.Group", fcol_tc = "Protein.Group", name = "precursors_lip_usage", match_cols_lip_to_tc = colnames(qf[[i_lip]]))
+calculate_usage_paired <- function(qf, i_lip = "precursors_lip_norm", 
+                                    i_tc = "proteins_tc", 
+                                    fcol_lip = "Protein.Group", 
+                                    fcol_tc = "Protein.Group", 
+                                    name = "precursors_lip_usage", 
+                                    match_cols_lip_to_tc = colnames(qf[[i_lip]]))
 {
-    qf <-  addAssay(qf, qf[[i_lip]], name = name) #1.
-    qf <- filterFeatures(qf, 
+    qf <-  QFeatures::addAssay(qf, qf[[i_lip]], name = name) #1.
+    qf <- QFeatures::filterFeatures(qf, 
                          i = name,
-                         filter = formula(
-                           paste0("~",fcol_tc, "%in% rowData(qf[[i_tc]])[[fcol_tc]]") #2. 
-                           )
-                         )
+                         filter = formula(paste0("~",fcol_tc, "%in% rowData(qf[[i_tc]])[[fcol_tc]]") ))
 
-    match_precursor_to_protein_FC <- match(rowData(qf[[name]])[[fcol_lip]],
-                                         rowData(qf[[i_tc]])[[fcol_tc]]) #3.
-    assay(qf[[name]]) <- assay(qf[[name]]) - assay(qf[[i_tc]])[match_precursor_to_protein_FC, match_cols_lip_to_tc] #4.
-      return(qf) 
+    match_precursor_to_protein_FC <- match(SummarizedExperiment::rowData(qf[[name]])[[fcol_lip]],
+                       SummarizedExperiment::rowData(qf[[i_tc]])[[fcol_tc]]) 
+    
+    SummarizedExperiment::assay(qf[[name]]) <- 
+      SummarizedExperiment::assay(qf[[name]]) - 
+      SummarizedExperiment::assay(qf[[i_tc]])[match_precursor_to_protein_FC, match_cols_lip_to_tc]
+    return(qf) 
 } 
 
    tryCatch( expr = {
+     log_info('Computing usage in paired design ...')
      q_feat <- calculate_usage_paired(q_feat, match_cols_lip_to_tc = 1:ncol(q_feat[["precursors_lip_norm"]]))
-      return( list(error= err, status= 0,result =q_feat ))
-     },error = function(err){
-        print(paste("normalization_scaling_factor:  ",err))
-        return( list(error= err, status= 1,result =q_feat ))
+      return( list(error= '', status= 0,result =q_feat ))
+   },error = function(err){
+        print(paste("compute usage/paired design :  ",err))
+        return( list(error= err, status= 1,result = NULL ))
   } )
  
 }
 
-qc_precursor  <-function(q_feat){
-
+#' Classify Peptide Trypticity
+#' @title classify_trypticity
+#' Categorizes peptides as Tryptic, Semi-Tryptic, or Non-Tryptic based on the 
+#' presence of Lysine (K) or Arginine (R) at the cleavage sites, while 
+#' accounting for protein termini and N-terminal Methionine excision.
+#'
+#' @param peptide A character vector of peptide sequences.
+#' @param protein A character vector of the parent protein sequences.
+#' @param start_pos A numeric vector indicating the starting position of the 
+#' peptide within the protein (1-based indexing).
+#'
+#' @return A character vector of the same length as `peptide` containing 
+#' "Tryptic", "Semi-Tryptic", "Non-Tryptic", or "Ambiguous".
+#' 
+#' @details 
+#' The classification rules are:
+#' \itemize{
+#'   \item \strong{Tryptic}: Both ends follow tryptic rules (preceded by K/R or at N-term; ends in K/R or at C-term).
+#'   \item \strong{Semi-Tryptic}: Only one end follows tryptic rules.
+#'   \item \strong{Non-Tryptic}: Neither end follows tryptic rules.
+#' }
+#' Special case: If a peptide starts at position 2 and the first amino acid 
+#' of the protein is Methionine (M), the N-terminus is considered tryptic 
+#' due to common N-terminal Methionine excision.
+#'
   
 classify_trypticity <- function(peptide, protein, start_pos) {
  
@@ -249,24 +716,81 @@ classify_trypticity <- function(peptide, protein, start_pos) {
   )
 }
   
+#' Calculate Protein Sequence Coverage
+#' @title calculate_coverage
+#' @author Andrea Argentini
+#' This function calculates the fraction of a protein sequence covered by a set 
+#' of peptides or fragments. It accounts for overlapping regions by treating 
+#' the segments as genomic-style ranges.
+#'
+#' @param start A numeric vector of start positions for the peptides.
+#' @param end A numeric vector of end positions for the peptides.
+#' @param protein_length A single numeric value representing the total length 
+#' of the protein sequence.
+#'
+#' @return A numeric value (0 to 1) representing the percentage of the protein 
+#' sequence covered. Returns `NA` if `protein_length` is `NA` or if no valid 
+#' start/end pairs are provided.
+#'
+#' @importFrom IRanges IRanges
+#' @importFrom S4Vectors coverage
+#' @importFrom magrittr %>%
+#' @importFrom stats na.omit
+#' 
+
  calculate_coverage <- function(start, end, protein_length) {
-  require(IRanges)
   #Checks 
   if (is.na(protein_length)) return(NA)
-  startEnd <- cbind(start,end) |> na.omit()
+  startEnd <- cbind(start,end) %>% na.omit()
   if (nrow(startEnd) <1) return(NA)
-  covered <- IRanges(startEnd[,1], startEnd[,2]) |> 
-    coverage() |>
-    as.logical() |>
+  covered <- IRanges(startEnd[,1], startEnd[,2]) %>%
+    coverage() %>%
+    as.logical() %>%
     sum()
   return(covered/protein_length)
 } 
 
-  
+#' Characterize Peptide Properties and Mapping
+#'
+#' @title pep_char
+#' 
+#' @description 
+#' This function annotates a data frame of peptides with biochemical and 
+#' positional properties. Finally, we define a function for adding and 
+#' adjusting data for the features to:
+#' \enumerate{
+#'   \item Define missed_cleavages
+#'   \item Calculate how many times precursor is repeated in protein
+#'   \item Calculate start and end position in a protein
+#'   \item Define peptide type
+#'   \item Extract last amino acid
+#' }
+#'
+#' @param table A data frame or tibble containing peptide and protein sequences.
+#' @param prot_seq A character string specifying the column name for the 
+#' full protein sequence. Default is `"Protein.Sequence"`.
+#' @param pep_seq A character string specifying the column name for the 
+#' stripped peptide sequence. Default is `"Stripped.Sequence"`.
+#'
+#' @return A data frame with the following additional columns:
+#' \itemize{
+#'   \item \code{missed_cleavages}: Count of internal [RK] not followed by P.
+#'   \item \code{total_repeats}: Number of times the peptide occurs in the protein.
+#'   \item \code{start}: Starting position of the first occurrence.
+#'   \item \code{end}: Ending position of the first occurrence.
+#'   \item \code{pep_type}: Trypticity classification (Tryptic, Semi, Non, or Ambiguous).
+#'   \item \code{AA_last}: The C-terminal amino acid of the peptide.
+#' }
+#'
+#' @importFrom dplyr mutate select
+#' @importFrom stringr str_count str_locate str_sub
+#' @importFrom magrittr %>%
+#' @importFrom rlang sym
+#'
 pep_char <- function(table, prot_seq="Protein.Sequence", pep_seq="Stripped.Sequence")
 {
   table <- table |>
-    mutate(missed_cleavages = get(pep_seq) |> 
+    mutate(missed_cleavages = get(pep_seq) %>%
              str_count("[RK](?!(P|$))"), #1.
          total_repeats = str_count(get(prot_seq), get(pep_seq)), #2.
          tmp = str_locate(Protein.Sequence, Stripped.Sequence),
@@ -280,45 +804,84 @@ pep_char <- function(table, prot_seq="Protein.Sequence", pep_seq="Stripped.Seque
              protein = Protein.Sequence, 
              start_pos = start)), #4.
          AA_last = str_sub(Stripped.Sequence, -1, -1) #5.
-           ) |> 
+           ) %>%
     select(-tmp)
-}  
-  tryCatch( expr = { 
+} 
 
- #### this should be checked  QFeatures::longFormat() is actually deprecated !  )
- qcObj <- qf[,,c("precursors_lip_norm",
-                "precursors_tc_norm",
-                "precursors_lip_usage")] %>%
-  QFeatures::longFormat(colvars = c("Condition",
-                       "CondRep",
-                       "Treatment",
-                       "Replicate",
-                       "Pipeline"), 
-           rowvars= c("Precursor.Id", 
-                      "Protein.Group", 
-                      "Stripped.Sequence",
-                      "Precursor.Charge",
-                      "Genes")) %>%
-  data.frame() %>%
-  left_join(mapping, by = join_by(Protein.Group == Accession)) %>%
-  pep_char() %>%
-  mutate(
-    assay = as.factor(assay) %>%
-      case_match(
-        "precursors_lip_norm" ~ "LiP", 
-        "precursors_lip_usage" ~ "usage", 
-        "precursors_tc_norm" ~ "TC"),
-    CondRep = paste(Condition, assay, Replicate, sep="_"),
-    Condition = paste(Condition, assay, sep="_"))
- 
-    return( list(error= err, status= 1,result = qcObj ))
 
-  },error = function(err){
-     print(paste("normalization_scaling_factor  ",err))
-     return( list(error= err, status= 1,result =q_feat ))
-   } )
+#' Annotate Precursors for QC Visualization
+#'
+#' @title Precursor Annotation for Quality Control Plots
+#' 
+#' @description 
+#' Converts QFeatures assays into a long-format data frame and performs 
+#' comprehensive annotation including protein mapping, peptide characterization, 
+#' and condition formatting. This prepared data is typically used for QC 
+#' plots like MDS or intensity distributions.
+#'
+#' @param q_feat A \code{QFeatures} object containing "precursors_lip_norm", 
+#' "precursors_tc_norm", and "precursors_lip_usage" assays.
+#' @param mapping A data frame used for joining protein accessions to metadata. 
+#' Must contain an \code{Accession} column.
+#'
+#' @return A list with the following components:
+#' \itemize{
+#'   \item \code{error}: Character string containing error messages, if any.
+#'   \item \code{status}: Integer (0 for success, 1 for error).
+#'   \item \code{result}: An annotated data frame in long format.
+#' }
+#'
+#' @importFrom QFeatures longForm
+#' @importFrom dplyr left_join mutate case_match join_by
+#' @importFrom magrittr %>%
+#' @importFrom rlang .data
+#' @importFrom logger log_info
+#'
+
+
+qc_precursor_annotation <- function(q_feat, mapping, type) {
+  tryCatch(expr = { 
+    log_info('Annotate precursor for QC plot ...')
+    
+    # 1. Define layers
+    layer <- if (type == 'paired') {
+      c("precursors_lip_norm", "precursors_tc_norm", "precursors_lip_usage")
+    } else {
+      c("precursors_lip_norm", "precursors_tc_norm")
+    }
+    
+    # 2. Extract and Join
+    qcObj <- q_feat[,,layer] %>%
+      QFeatures::longForm(
+        colvars = c("Condition", "CondRep", "Treatment", "Replicate", "Pipeline"), 
+        rowvars = c("Precursor.Id", "Protein.Group", "Stripped.Sequence", 
+                    "Precursor.Charge", "Genes")
+      ) %>%
+      as.data.frame() %>%
+      # Fix: Removed x$ and y$ references for join_by compatibility
+      dplyr::left_join(mapping, by = dplyr::join_by(Protein.Group == Accession)) %>%
+      pep_char() %>%
+      # Fix: Moved this OUTSIDE the 'if' so all types get clean labels
+      dplyr::mutate(
+        assay = dplyr::case_match(
+          .data$assay,
+          "precursors_lip_norm" ~ "LiP", 
+          "precursors_lip_usage" ~ "usage", 
+          "precursors_tc_norm" ~ "TC",
+          .default = .data$assay
+        ),
+        CondRep = paste(.data$Condition, .data$assay, .data$Replicate, sep = "_"),
+        Condition = paste(.data$Condition, .data$assay, sep = "_")
+      )
+
+    return(list(error = '', status = 0, result = qcObj))
+    
+  }, error = function(err) {
+    msg <- conditionMessage(err)
+    message(paste("Annotation precursor error: ", msg))
+    return(list(error = msg, status = 1, result = NULL))
+  })
 }
-
 
 
 
@@ -426,54 +989,66 @@ app_b <- app_a %>%
 #'   \item{diann_flag}{logical; TRUE if the report looks like DIA‑NN (contains a "Run" column)}
 #' @importFrom arrow read_parquet read_tsv_arrow
 #' @importFrom dplyr rename
-#' @importFrom stringr str_split
+#' @importFrom rlang .data
 #' @importFrom logger log_info
-
-   parse_input <- function( input_parquet_tc, input_parquet_lip ,  dual , input_design){
-     
-      is_diann <- function(df) {
-          "Run" %in% colnames(df)
-        }
-     
-      tryCatch( expr = {
-               
-                ## code here
-                if (dual == TRUE){
-                    log_info('Reading Tc and Lip from SEPARATE parquet files ...')
-                    TC_report <- read_parquet(input_parquet_tc)
-                    LiP_report <- read_parquet(input_parquet_lip)
-                    stop('To BE FIXED ...') 
-                }else{
-                    log_info('Reading both LiP and TC from ONE parquet file ...')
-                    LiP_report <- read_parquet( input_parquet_lip)
-                    TC_report <- NULL
-                }
-                  diann_flag <- is_diann(LiP_report)
-                  log_info('Reading experiment Design file  ...')
-        					design  <- read_tsv_arrow(input_design)
-									## check design file. 
-                  # 
-                  col_design_required <-  c('Run',	'Pipeline', 	'Treatment',	'Condition'	,'Replicate', 'CondRep')
-                  checkdesign <- check_design_requirement(design , col_design_required)
-                  design <- design %>% rename(runCol = Run)
-                  
-                  if (checkdesign$status == 1){
-                    return( list(error= checkdesign$error , status= 1,lip =NULL ))
-                    
-                  }else{
-                    return( list(error= '', status= 0,lip = LiP_report ,
-                          tc = TC_report,
-                          design = design,
-                          diann_flag = diann_flag))
-                  }
-                  
-                ## good exit
-      },error = function(err){
-                    print(paste(" Input Parquet :  ",err))
-                    return( list(error= err, status= 1,lip =NULL ))
-                  } )
-   }
-
+parse_input <- function(input_parquet_tc, input_parquet_lip, dual, input_design) {
+  
+  # Internal helper to check for DIA-NN format
+  is_diann <- function(df) {
+    "Run" %in% colnames(df)
+  }
+  
+  tryCatch(
+    expr = {
+      # 1. Loading Reports
+      if (isTRUE(dual)) {
+        log_info('Reading Tc and Lip from SEPARATE parquet files ...')
+        TC_report <- arrow::read_parquet(input_parquet_tc)
+        LiP_report <- arrow::read_parquet(input_parquet_lip)
+        # Note: 'stop' will be caught by the error block below
+        stop('Dual mode logic is currently being fixed.') 
+      } else {
+        log_info('Reading both LiP and TC from ONE parquet file ...')
+        LiP_report <- arrow::read_parquet(input_parquet_lip)
+        TC_report <- NULL
+      }
+      
+      diann_flag <- is_diann(LiP_report)
+      
+      # 2. Loading and Validating Design
+      log_info('Reading experiment Design file ...')
+      design <- arrow::read_tsv_arrow(input_design)
+      
+      col_design_required <- c('Run', 'Pipeline', 'Treatment', 'Condition', 'Replicate', 'CondRep')
+      
+      # Assuming check_design_requirement is an internal package function
+      checkdesign <- check_design_requirement(design, col_design_required)
+      
+      # Use .data$Run to avoid "no visible binding for global variable" warning
+      design <- design %>% 
+        dplyr::rename(runCol = .data$Run)
+      
+      if (checkdesign$status == 1) {
+        return(list(error = checkdesign$error, status = 1, lip = NULL))
+      } else {
+        return(list(
+          error      = '', 
+          status     = 0,
+          lip        = LiP_report,
+          tc         = TC_report,
+          design     = design,
+          diann_flag = diann_flag
+        ))
+      }
+    },
+    error = function(err) {
+      # Extracting the error message specifically
+      msg <- conditionMessage(err)
+      message(paste("Input Parquet Error: ", msg))
+      return(list(error = msg, status = 1, lip = NULL))
+    }
+  )
+}
 
 
 #' @author Andrea Argentini
@@ -911,6 +1486,7 @@ msqrob_model <- function(pe, params, layer  ){
 
     
     log_info('Msqrob model ...')
+    
     pe <- msqrob(object = pe, i = layer,
           formula = as.formula(params$formula),
 
@@ -934,7 +1510,7 @@ msqrob_model <- function(pe, params, layer  ){
     L <- makeContrast(contrast_list, parameterNames = coef)
     pe <- hypothesisTest(object = pe, i = layer, contrast = L , overwrite=TRUE)
 
-    return (list(error= '', status= 0,q_feat = pe  ))
+    return (list(error= '', status= 0,q_feat = pe , contr_exp = L   ))
 
 
   },error = function(err){
