@@ -141,6 +141,7 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                     build_df_result,
                     data= res_de_usage$q_feat  ,
                     df_anno = df_ann  ,
+                    mapping_df = fastaproc$result,
                     layer=  'precursors_lip_norm' ,
                     layer_ = 'precursors_lip_usage' )  
               assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm",'precursors_lip_usage' )
@@ -162,6 +163,7 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                     build_df_result,
                     data= qf_unpair$qf  ,
                     df_anno = df_ann  ,
+                    mapping_df = fastaproc$result,
                     layer= 'precursors_lip_norm' ,
                     layer_ = NULL)
                 qf_unpair$qf   
@@ -211,7 +213,7 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
 #' @keywords internal
 
 
-build_df_result <- function (label, data , layer , layer_ = NULL , df_anno){
+build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapping_df){
        #browser()
  # --- 1. Process Assay A (e.g., Lip normalized) ---
       res_layer <-  rowData(data[[layer]])[[label]]
@@ -246,6 +248,12 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno){
     left_join(df_anno, by = "Precursor.Id") %>%
     mutate(contrast = label) # Good for downstream filtering
   
+  # --4 join with sequence 
+  final_df <- final_df %>% 
+    left_join(mapping_df, by = join_by ( Protein.Group == Accession)) %>%
+    pep_char()
+   
+
   return(list( df = final_df))
 
 }

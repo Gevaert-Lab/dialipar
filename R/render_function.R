@@ -319,6 +319,7 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   ## Drafting the  flow
 
   data_ <- process_dialipa_data(params_report = params_report)
+ 
   render_quarto_template( data_list = data_$result,
     template_name = 'Template_WIP.qmd',
     report_fld = report_folder, 

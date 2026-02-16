@@ -43,7 +43,7 @@ params:
  #| output: false
 
  required_packages = c('QFeatures',"ggrepel","tidyr","tibble","heatmaply","pcaMethods",
-                       "plotly","DT","MSnbase",'gridExtra','dplyr','stringr' ,"ggcorrplot",'logger','pander','ggsci','GGally','yaml')
+                       "plotly","DT","MSnbase",'gridExtra','dplyr','stringr' ,"ggcorrplot",'logger','pander','ggsci','GGally','yaml','scater','Glimma')
 # #print(required_packages)
  dialipar::check_dependencies(required_packages)
 
@@ -124,7 +124,7 @@ data_ <- readRDS(params$data_path)
 
 complete_rep  <-  data_$qc_data 
 
- pe  <-  data_$qf_final
+ pe  <-  data_$pe
 
 # res_DE <-  data_$res_DE 
 
@@ -332,3 +332,55 @@ miss_cl
 ggsave(   file.path(params$folder_prj, "Result", "miss_cleavage_peptide.pdf"),plot = miss_cl
 ,  dpi = 600, height = 6, width = 12)
 ```
+
+
+## PCA / MDS 
+
+
+```{r }
+
+se <- joinAssays(pe,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") |>  getWithColData("joinedAssay")
+
+se <- scater::runMDS(as(se, "SingleCellExperiment"), exprs_values =1)
+
+eig <- attr(reducedDim(se, "MDS"), "eig")
+
+# Calculate % variance (Eigenvalue / Sum of all Eigenvalues)
+if (!is.null(eig)) {
+  percent_var <- (eig / sum(eig)) * 100
+  xlbl <- paste0(" Component 1 (", round(percent_var[1], 1), "%)")
+  ylbl <- paste0("Component 2 (", round(percent_var[2], 1), "%)")
+} else {
+  # Fallback if no variance is found
+  xlbl <- "MDS1"
+  ylbl <- "MDS2"
+}
+
+
+mds_plot <- scater::plotMDS(se, colour_by = "Condition") +
+  # We re-apply geom_point to control alpha and the custom hover text
+  # Using \n creates a new line in the plotly tooltip
+  geom_point(aes(color = colData(se)$Condition, 
+    text = paste0(
+      "Sample: ", colData(se)$CondRep, "<br>",
+      "Condition: ", colData(se)$Condition, "<br>",
+      "Replicate: ", colData(se)$Replicate
+    )
+  ), alpha = 0.8, size = 3) + 
+  labs(x = xlbl, y = ylbl) +
+  theme_bw()
+
+ggplotly(mds_plot, tooltip = "text")
+# mds_coords <- reducedDim(se, "MDS")
+# mdata <- as.data.frame(colData(se))
+
+
+# glimmaMDS(assay(se), 
+#           groups = colData(se)$Condition,
+#           labels = colData(se)$CondRep,
+#           sample.data = mdata)
+
+```
+
+
+
