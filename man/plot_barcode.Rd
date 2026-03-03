@@ -4,18 +4,29 @@
 \alias{plot_barcode}
 \title{plot_barcode}
 \usage{
-plot_barcode(POI, input, group_column, DE_result, indicate_direction = F)
+plot_barcode(
+  POI,
+  se,
+  group_column = "Treatment",
+  DE_result,
+  indicate_direction = F,
+  prot_seq,
+  usage = TRUE,
+  directionality = FALSE,
+  expand = FALSE,
+  params
+)
 }
 \arguments{
 \item{POI}{Character vector of protein accessions (Uniprot IDs) to plot}
-
-\item{input}{Data frame or tibble with precursor-level annotations and quantitative columns (must include Accession, Precursor.Id, Drug, normPQ, Proteotypic, total_repeats, coverage, Stripped.Sequence, repeat_nr)}
 
 \item{group_column}{Unquoted column name (tidy evaluated) indicating the grouping variable in input (e.g., Drug)}
 
 \item{DE_result}{Data frame of differential expression results (must contain precursor.Id, logFC, pval, adjPval)}
 
 \item{indicate_direction}{Logical; if TRUE annotate significance with directionality (default FALSE)}
+
+\item{input}{Data frame or tibble with precursor-level annotations and quantitative columns (must include Accession, Precursor.Id, Drug, normPQ, Proteotypic, total_repeats, coverage, Stripped.Sequence, repeat_nr)}
 }
 \value{
 A plotting object (the result returned by make_barplot), typically a ggplot or list containing plot elements for the barcode visualization

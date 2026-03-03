@@ -116,17 +116,21 @@ write(as.yaml(params), file =  file.path( params$folder_prj, paste0("dialipa_par
 ```{r import_data}
 
 #L <- readLines(params$design_file, n = 1)
-expdesign <- read.delim(params$design_file,sep="\t")
+expdesign <- read.delim(params$design_file, sep="\t")
 #if (grepl(";", L)) expdesign <- read.csv2(params$design_file) else design <- read.csv(params$design_file)
 
 
 data_ <- readRDS(params$data_path)
+log_info({str(data_, max.level = 2)})
 
-complete_rep  <-  data_$qc_data 
+actual_data <- data_$result 
 
- pe  <-  data_$pe
+# Now map the variables
+complete_rep <- actual_data$qc_data 
+pe           <- actual_data$pe
+res_DE       <- actual_data$res_DE
 
-# res_DE <-  data_$res_DE 
+
 
 
 
@@ -384,3 +388,51 @@ ggplotly(mds_plot, tooltip = "text")
 
 
 
+## DE Analysis
+
+
+Using MSqRob2 with the following formula `r params$formula` 
+
+LogFC threshold used  abs(LogFC) >  `r params$FC_thr`; 
+
+Threshold of statistical significance adj.Pval < `r params$adjPval_thr`
+
+`r if (all(params$poi == "")) { "No Proteins of Interest (POIs) are specified; POIs will include accessions with statistically significant peptides" } else {  paste0("Proteins of Interest (POIs) were specified: ", paste(params$poi, collapse = ", "))}`
+
+```{r set_contrast_folder  }
+if (!dir.exists(file.path(params$folder_prj, "Result","Contrast"))){
+  dir.create(file.path( params$folder_prj, "Result","Contrast"), recursive = TRUE)
+}
+# old one params$comparisons
+for (a in   params$comparison_label ){
+  log_info(a)
+  log_info(check_and_substitute_forbidden_chars(a))
+  dir.create(file.path(params$folder_prj,"Result","Contrast",check_and_substitute_forbidden_chars(a)), recursive = TRUE,showWarnings = TRUE)
+}  
+
+log_info({ names(res_DE)})
+
+log_info('Saving pe object (qfeatures) as Rds file.')
+saveRDS(pe, file = file.path( params$folder_prj, "Result","qfeat_experiment.Rds"))  
+```
+
+
+```{r comparison}
+#| results: asis
+
+for (cmp in names(res_DE)) {
+        log_info( paste0('  --  ',cmp)) 
+
+    cmp_label <- gsub('Comparison','',cmp )
+    cat( '### ', paste(cmp_label,sep=' '), '\n\n')
+    cat ('This volcano plot summarizes the differential expression landscape in the comparison between the two groups \n\n')
+    #cat(paste('POI : ', paste(res_DE[[cmp]]$POI, collapse = ' ' ),collapse = ' '))
+    
+    dialipar::render_child(data = res_DE[[cmp]],
+                 pe = NULL,
+                 label = cmp , 
+                 path=file.path(params$folder_prj, "Result","Contrast",check_and_substitute_forbidden_chars(cmp)),  
+                 template='_templateContrast.Rmd') 
+    cat('\n\n')   
+}
+```

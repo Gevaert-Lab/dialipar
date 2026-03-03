@@ -473,7 +473,7 @@ for (a in   params$comparison_label ){
   log_info(check_and_substitute_forbidden_chars(a))
   dir.create(file.path(params$folder_prj,"Result","Contrast",check_and_substitute_forbidden_chars(a)), recursive = TRUE,showWarnings = TRUE)
 }  
-
+log_info({ names(res_DE)})
 #log_info('Saving pe object (qfeatures) as Rds file.')
 #saveRDS(pe, file = file.path( params$folder_prj, "Result","qfeat_experiment.Rds"))  
 ```

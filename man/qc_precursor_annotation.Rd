@@ -4,7 +4,7 @@
 \alias{qc_precursor_annotation}
 \title{Precursor Annotation for Quality Control Plots}
 \usage{
-qc_precursor_annotation(q_feat, mapping)
+qc_precursor_annotation(q_feat, mapping, type)
 }
 \arguments{
 \item{q_feat}{A \code{QFeatures} object containing "precursors_lip_norm", 

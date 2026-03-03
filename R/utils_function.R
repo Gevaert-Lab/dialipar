@@ -143,7 +143,8 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                     df_anno = df_ann  ,
                     mapping_df = fastaproc$result,
                     layer=  'precursors_lip_norm' ,
-                    layer_ = 'precursors_lip_usage' )  
+                    layer_ = 'precursors_lip_usage',
+                  params = params_report)  
               assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm",'precursors_lip_usage' )
                 # Subset to only these
               qf_final <- res_de_usage$q_feat[, , assays_to_keep]
@@ -165,17 +166,21 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                     df_anno = df_ann  ,
                     mapping_df = fastaproc$result,
                     layer= 'precursors_lip_norm' ,
-                    layer_ = NULL)
-                qf_unpair$qf   
+                    layer_ = NULL,
+                  params = params_report)
+                names(test_)<- params_report$comparison_label
+                #qf_unpair$qf   
+
                 assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm" )
                 # Subset to only these
                 qf_final <- qf_unpair$qf[, , assays_to_keep]
         }
-  
         ##  qc -> data for QC
         ##  pe -> Qfeat subseted
-        quarto_bag <- list(qc_data = qc_ann$result,
-                          pe = qf_final  )
+       
+        quarto_bag <- list( qc_data = qc_ann$result,
+                            pe = qf_final,
+                            res_DE= test_  )
 
         return( list(error= '', status= 0,result =quarto_bag ))
  
@@ -207,14 +212,13 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
 #'   data frame of statistics and annotations for the requested contrast.
 #' 
 #' @importFrom SummarizedExperiment rowData
-#' @importFrom dplyr rename rename_with left_join mutate full_join
+#' @importFrom dplyr rename rename_with left_join mutate full_join relocate
 #' @importFrom tibble rownames_to_column
 #' @importFrom stringr str_remove fixed
 #' @keywords internal
 
 
-build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapping_df){
-       #browser()
+build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapping_df, params){
  # --- 1. Process Assay A (e.g., Lip normalized) ---
       res_layer <-  rowData(data[[layer]])[[label]]
       res_layer_df <- as.data.frame(res_layer, check.names = FALSE) %>% 
@@ -253,8 +257,41 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
     left_join(mapping_df, by = join_by ( Protein.Group == Accession)) %>%
     pep_char()
    
+  # top table corrected and not 
+  full_toptable <- final_df %>% relocate("Precursor.Id", contains("usage"))
+  
+  # first filter the data              
+  #vol_volcano_make(final_df)  
+  # volcano = volcano_out,  POI_l = POI_Plot 
 
-  return(list( df = final_df))
+    res_usage  <- make_volcano_plot (
+      df = full_toptable,
+      params = params,
+      title = paste0("Volcano ", 'TEST' ),
+      to_save= FALSE
+    )
+  
+    res_ncorrect   <- make_volcano_plot (
+      df = full_toptable,
+      params = params,
+      title = paste0("Volcano ", 'TEST' ),
+      usage = FALSE,
+      to_save= FALSE
+    )
+  prot_seq_ <-  mapping_df %>% filter(Accession %in% res_usage$POI_l)
+  
+  se <- joinAssays(data,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") %>%  
+          getWithColData("joinedAssay")
+  
+  
+   barplot_id <- plot_barcode (res_usage$POI_l, se , 
+                  DE_result = full_toptable,   prot_seq = prot_seq_ ,  
+                group_column = 'Treatment'  , params= params )
+  
+  return(  list( full_toptable =    full_toptable, 
+                 plotvolcano_usage=  res_usage$volcano , 
+                 plotvolcano_ncorr= res_ncorrect$volcano ,
+                 barplot_ =  barplot_id$gg ))
 
 }
 
@@ -1310,28 +1347,7 @@ tryCatch( expr = {
 }
 
 
-#' @author Andrea Argentini
-#' @title dfToWideMsqrob
-#' @description Convert a long precursor-level data.frame to wide format suitable for Qfeature/msqrob: keep specified feature columns and pivot the given quantification column by Run into sample columns.
-#' @param data Data frame or tibble in long format containing at minimum the columns specified in wide_colums, "Run", and the quantification column named in precursorquan
-#' @param precursorquan Character; name of the quantification column to spread into wide columns (e.g., "Precursor.Quantity")
-#' @param wide_colums Character vector of column names to retain as identifier/feature columns prior to pivoting
-#' @return A data.frame (tibble) in wide format with one row per feature (identifiers in wide_colums) and one column per Run containing the quantification values
-#' @importFrom dplyr select
-#' @importFrom tidyr pivot_wider
-#' @importFrom rlang .data
 
-dfToWideMsqrob <- function(data, precursorquan, wide_colums) {
-  data %>%
-    select(
-       wide_colums,
-      .data[[precursorquan]]
-    ) %>%
-    pivot_wider(
-      names_from = Run,
-      values_from = .data[[precursorquan]]
-    )
-}
 
 
 #' @author Andrea Argentini
@@ -1562,7 +1578,7 @@ msqrob_model <- function(pe, params, layer  ){
 #' @importFrom plotly plot_ly add_lines layout
 
 
-make_volcano_plot <- function(df, params, title, annotation_fields , poi_vis , to_save  ) {
+make_volcano_plot <- function(df, params, title, annotation_fields = NULL,   to_save = FALSE, usage= TRUE  ) {
   # Compose tooltip string based on requested annotation fields
   if (to_save== F ){
     df <- df %>%
@@ -1572,119 +1588,95 @@ make_volcano_plot <- function(df, params, title, annotation_fields , poi_vis , t
           1,
           function(row) {
             paste(paste0(annotation_fields, ": ", row), collapse = "<br>")
-          }
-        )
-      )
+          })
+         )
+    }
+    if (usage){ 
+      df <- df %>% select(.data$usage_adjPval,.data$usage_pval, .data$usage_logFC, .data$Protein.Group, .data$Genes ,.data$pep_type) %>%  
+      mutate(adjPval = usage_adjPval,
+           pval = usage_pval,
+           logFC = usage_logFC) 
+    }else{
+           df <- df %>% select(.data$adjPval,.data$pval, .data$logFC, .data$Protein.Group, .data$Genes ,.data$pep_type) 
+    }
     # plotly native code 
+   sigPG <- df |>
+          filter(.data$adjPval <= params$adjPval_thr) %>%
+          arrange(.data$pval) %>% 
+          pull(.data$Protein.Group)
+   
+  #  POIs <-df %>%
+  #         dplyr::filter(! is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
+  #         dplyr::pull(.data$Accession) %>%
+  #         unique()
+    nPOI <- function(x) sapply(seq_along(x), function(i,x){length(unique(x[1:i]))},x=x)
+    POI_Plot <- sigPG[nPOI(sigPG) <=10] |> unique()
 
-  hline_y <- -log10(
-  0.05 * sum(distinct(df, precursor.Id, .keep_all = TRUE)$adjPval <= 0.05, na.rm = TRUE) /
-  nrow(distinct(df, precursor.Id, .keep_all = TRUE))
-  )
- 
-  shape_map <- c(
-  "Semi-Tryptic" = "circle",
-  "Tryptic" = "square",
-  "Non-Tryptic" = "triangle-up"
-  )
+    POI_Plot_Genes <- df %>%
+      select(.data$Protein.Group, .data$Genes) %>%
+      filter(Protein.Group %in% POI_Plot) %>%
+      pull(.data$Genes) %>% 
+        unique() 
+    
+    adjAlpha <-  params$adjPval_thr * mean(df$adjPval<= params$adjPval_thr, na.rm = TRUE)
   
-  # Get interest vector
-  interest_vec <- as.character(df$interest)
-
-  # Identify POI (points of interest) levels
-  poi_levels <- setdiff(unique(interest_vec), c("Significant", "Not Significant"))
-  poi_levels <- poi_levels[!is.na(poi_levels)]  # remove any NA
-
-  # Number of POI levels
-  n_poi <- length(poi_levels)
-
-  # Generate POI colors dynamically using RColorBrewer or ggplot palettes
-  # Here using pal_npg from ggplot2 / ggprism / ggsci
-  poi_colors <- pal_npg()(n_poi)
-
-  # Create a named vector mapping all levels of interest to colors
-  level_colors <- c(
-    setNames(poi_colors, poi_levels),  # map POIs to dynamic colors
-    "Significant" = "red",
-    "Not Significant" = "black"
-  )
+  # #
+  #  ggrepel::geom_text_repel(data = . %>% filter(interest != "Not Relevant"),
+  #                              aes(label = Genes,
+  #                                  colour = interest),
+  #                              size = 2,
+  #                              segment.size = 0.25,
+  #                              show.legend = F) +
   
-  df$plotly_symbol <- shape_map[ as.character(df$pep_type) ]  
-  plot_ly(
-    data = df,
-    x = ~logFC,
-    y = ~-log10(pval),
-    text = ~tooltip_text,
-    color = ~interest,
-    colors = level_colors,
-    type = "scatter",
-    mode = "markers",
-    marker = list(
-       symbol = df$plotly_symbol, 
-      size = 6,
-      line = list(width = 0.5, color = "grey")
-    ),
-    hoverinfo = "text"
-  ) %>%
-    add_lines(
-      x = c(- params$FC_thr, - params$FC_thr),
-      y = c(0, max(-log10(df$pval), na.rm = TRUE)),
-      line = list(color = "grey", dash = "dot"),
-      name = paste0("Log2FC = ", params$FC_thr),
-      inherit = FALSE,
-      showlegend = FALSE
-    )   %>% add_lines(
-      x = c( params$FC_thr,  params$FC_thr),
-      y = c(0, max(-log10(df$pval), na.rm = TRUE)),
-      line = list(color = "grey", dash = "dot"),
-      name = paste0("Log2FC = ", params$FC_thr),
-      inherit = FALSE,
-      showlegend = FALSE
-    ) %>% 
-    add_lines(
-      x = range(df$logFC, na.rm = TRUE),
-      y = c(hline_y, hline_y),
-      line = list(color = "grey", dash = "dot"),
-      name = "Adjusted p-value threshold",
-      inherit = FALSE,
-      showlegend = FALSE
-    ) %>% layout(
-       title = list(text = "Differential LiP precursors",  x = 0.5),
-      xaxis = list(title = "Log2(Fold change)", zeroline = FALSE),
-      yaxis = list(title = "-Log10(P value)", zeroline = FALSE),
-      legend = list(title = list(text = "Legend"), orientation = "v")
-    )
-  }else{
+   # dataset 
 
-    ggplot(df, aes(x = logFC, y = -log10(pval))) +
+
+  levels_interest <- c(POI_Plot_Genes, "Relevant", "Not Relevant")
+
+  # 2. Build the Color Palette Vector
+  # We use named vectors: this ensures "Relevant" is ALWAYS red
+  poi_cols <- pal_npg()(length(POI_Plot))
+  names(poi_cols) <- POI_Plot_Genes
+
+  # Combine into a single named vector
+  my_colors <- c(poi_cols, "Relevant" = "red", "Not Relevant" = "black")
+  # 3. Build the Alpha Vector
+  my_alphas <- c(setNames(rep(1, length(POI_Plot)), POI_Plot_Genes), 
+                "Relevant" = 0.2, 
+                "Not Relevant" = 0.1)
+  df <- df %>%  filter(!is.na(.data$adjPval)) %>% 
+  mutate(relevance = ifelse(.data$adjPval<= params$adjPval_thr & abs(.data$logFC)>=params$FC_thr, "Relevant", "Not Relevant"),
+         interest = ifelse(.data$Protein.Group %in% POI_Plot, .data$Genes, .data$relevance) %>%
+           factor(levels=c(POI_Plot_Genes,"Relevant","Not Relevant"))) %>%
+    arrange(desc(.data$interest)) 
+
+  volcano_out <- ggplot(df, 
+          aes(x = logFC,
+              y = -log10(pval))) +
+      geom_hline(yintercept = -log10(adjAlpha)) +
+      geom_vline(xintercept = c(-1, 1)) +
       geom_point(size = 1,
-             
-             aes(colour= interest,  shape = pep_type , alpha = interest),
-             show.legend = T) +
-    theme_bw() +
-    geom_vline(xintercept = c(-params$FC_thr, params$FC_thr), col = "grey") +
-    geom_hline(yintercept = -log10(0.05*sum(distinct(df, precursor.Id, .keep_all = T)$adjPval<=0.05, na.rm = T)/nrow(distinct(df, precursor.Id, .keep_all = T))),
-                 col = "grey")  +
-    scale_colour_manual(values = c(pal_npg()(length(poi_vis)), ifelse("Significant" %in% df$interest, "red", "black"), "black")) +
-    scale_shape_manual(values = c(20, 18, 15) , guide = guide_legend(override.aes = list(size = 2))) +
-    scale_alpha_manual(values = c(rep(1, length(poi_vis)), 0.2, 0.1), 
-                     guide = guide_legend(override.aes = list(alpha = 1))) +
-    scale_x_continuous(breaks = -100:100*2) +
-    geom_text_repel( data =  df %>% filter(interest != "Not Significant"),
-                  aes(label = Genes,
-                      colour = interest),
-                  size = 2,
-                  segment.size = 0.25,
-                  show.legend = F) +
-    labs(title = title,
-       x = expression(Log[2](Fold~change)),
-       y = expression(-Log[10](P~value)),
-        colour = "Protein",
-       alpha = "Protein",
-       shape = "Peptide type")
-  }
- 
+                 aes(colour = interest,
+                     alpha = interest,
+                     shape = pep_type)) +
+      # Use a named vector or direct values instead of the .data subset
+      scale_colour_manual(values = my_colors) + 
+      scale_alpha_manual(values = my_alphas) +
+      scale_shape_manual(values = c(15:18),
+                     guide = guide_legend(override.aes = list(size = 3))) + 
+      scale_x_continuous(breaks = seq(-10, 10, by = 2)) + # seq is safer than -100:100*2
+      labs(title = paste0("Differentially ", ifelse(usage, "used", "abundant"), " LiP precursors"),
+           x = expression(Log[2](Fold~change)),
+           y = expression(-Log[10](P~value)),
+           colour = "Interest",
+           alpha = "Interest",
+           shape = "Peptide type") +
+      theme_bw()
+  
+  return(list ( volcano = volcano_out,  POI_l = POI_Plot ))
+
 }
+
 
 
 #' @author Andrea Argentini
@@ -1788,13 +1780,16 @@ p_toFile <-  make_volcano_plot (
  ## barcode plot  
 barcode <- lapply(POIs, plot_barcode, df_anno, "Treatment", DEall, T )  
 names(barcode) <- POIs
-#browser()
 barcode_plotly_list <- lapply(barcode, function(el) {
    #el$gg is the ggplot, el$colour_mapping_significance is the mapping
   plotly_from_ggplot(el$gg, el$colour_mapping_significance, title_center = 0.0, top_margin = 80, tooltip = "text")
 })
   
-return ( list( toptable =DEall , volcano = volcano, volcano2file = p_toFile , barcode_gg = barcode , barcode_plty = barcode_plotly_list,  POI = POIs ) )
+return ( list( toptable =DEall , 
+              volcano = volcano, 
+            volcano2file = p_toFile , 
+            barcode_gg = barcode , 
+            barcode_plty = barcode_plotly_list,  POI = POIs ) )
 
 }
 
@@ -1808,102 +1803,131 @@ return ( list( toptable =DEall , volcano = volcano, volcano2file = p_toFile , ba
 #' @param indicate_direction Logical; if TRUE annotate significance with directionality (default FALSE)
 #' @return A plotting object (the result returned by make_barplot), typically a ggplot or list containing plot elements for the barcode visualization
 #' @importFrom dplyr filter distinct group_by mutate left_join ungroup arrange pull
+#' @importFrom tidyr uncount
 #' @importFrom stats setNames
 
 
 
-plot_barcode <- function(POI, input, group_column, DE_result,  indicate_direction = F){
-groups <- input %>% pull(group_column) %>% unique()
-#browser()
+plot_barcode <- function(POI, se, group_column= 'Treatment', DE_result, 
+                              indicate_direction = F, 
+                              prot_seq,
+                            usage=TRUE, directionality = FALSE, expand = FALSE, params){
+  
+
+grouping <- colData(se)[[group_column]]
+groups <- unique(grouping)
+
 signif_names <- c(
   "Not Significant",
+  paste(groups[1], "Missing"), # verplaatst zodat significante bovenop komen
+  paste(groups[2], "Missing"),
   paste(groups[1], "Up"),
   paste(groups[2], "Up"),
-  paste(groups[1], "Missing"),
-  paste(groups[2], "Missing"),
-  "Significant",
-  "Missing"
+  "Missing",
+  "Significant"
 )
+
 signif_colours <- c(
   "grey40",
+  "yellow2", # ook mee verplaatst door hierboven
+  "lightskyblue",
   "lightslateblue",
   "orange2",
-  "yellow2",
-  "lightskyblue",
-  "orange",
-  "blue"
-)
+  "blue",
+  "orange"
+)  
+ 
 colour_mapping_significance <- setNames(signif_colours, signif_names)
-colour_mapping_type <- c("Non-proteotypic, internally repeating" = "green",
-                    "Non-proteotypic" = "red",
-                    "Internally repeating" = "purple",
-                    "Proteotypic" = "grey80")
 
-part_vis <-
-  input %>%
-  filter(Accession %in% POI) %>%
-  group_by(Precursor.Id, .data[[group_column]] ) %>% #change to group_column
-  mutate(median_abundance = median(normPQ, na.rm = T)) %>%
-  distinct(Precursor.Id, .data[[group_column]], repeat_nr, .keep_all = T) %>%
-  group_by(Precursor.Id) %>%
-  mutate(coverage = round(coverage*100, 2),
-         directionality = ifelse(length(unique(.data[[group_column]]))==2,
-                                 ifelse(median_abundance[.data[[group_column]] ==groups[2]]>median_abundance[ .data[[group_column]] ==groups[1]],
-                                        groups[2],
-                                        groups[1]),
-                                 ifelse(unique( .data[[group_column]])==groups[2], #check if correct
-                                        groups[1],
-                                        groups[2])),
-         completeness = ifelse(length(unique(.data[[group_column]]))==2,
-                               "Up",
-                               "Missing")) %>%
-  distinct(Precursor.Id, repeat_nr, .keep_all = T) %>%
-  left_join(DE_result %>% select(precursor.Id, logFC, pval, adjPval),
-            join_by(Precursor.Id== precursor.Id)) %>%
-  mutate(significance =
-           ifelse(indicate_direction,
-             ifelse(any(adjPval <= 0.05, all(is.na(adjPval), completeness=="Missing"), na.rm = T),
-                    paste(directionality, completeness),
-                    "Not Significant"),
-             ifelse(is.na(adjPval), # check if completeness=="Missing"
-                    "Missing",
-                    ifelse(adjPval<=0.05,
-                           "Significant",
-                           "Not Significant"))) %>%
-           factor(levels =  c("Not Significant",
-                              paste(rep(groups, 2), rep(c("Missing", "Up"), each = 2)),
-                              "Missing", "Significant")),
-           type = ifelse(Proteotypic==0 & total_repeats>1, "Non-proteotypic, internally repeating",
-                       ifelse(total_repeats>1, "Internally repeating",
-                              ifelse(Proteotypic==0, "Non-proteotypic",
-                                     "Proteotypic"))) %>%
-           factor(levels = c("Non-proteotypic, internally repeating",
-                             "Non-proteotypic",
-                             "Internally repeating",
-                             "Proteotypic")) ,
-                  section = ifelse(significance == "Not Significant",
-                          "Not Significant",
-                          ifelse(completeness=="Missing",
-                                 "Missing",
-                                 "Significant")) %>% 
-                  factor(levels = c("Not Significant", "Significant", "Missing")),
-                 peptype = case_match(pep_type,
-                              "SemiTryptic" ~ "Semi-Tryptic",
-                              "Tryptic" ~ "Tryptic",
-                              "NonTryptic" ~ "Non-Tryptic")
-                            ) %>%
-  group_by(Stripped.Sequence) %>%
-  mutate(tier = match(Precursor.Id, sort(unique(Precursor.Id))),
+colour_mapping_type <- c("Non-proteotypic, internally repeating" = "green", 
+                    "Non-proteotypic" = "red", 
+                    "Internally repeating" = "purple", 
+                    "Proteotypic" = "grey80")  
+
+  if (usage) 
+  { DE_result <- DE_result %>% select ( .data$Precursor.Id, .data$usage_adjPval,.data$usage_pval, .data$usage_logFC, .data$Protein.Group, .data$Genes, .data$length ,.data$pep_type,.data$Stripped.Sequence, .data$Proteotypic)  %>% mutate(pval = usage_pval, 
+         adjPval = usage_adjPval,
+         effectSize = usage)
+  } else {
+    DE_result <-  DE_result <- DE_result %>% select(.data$adjPval,.data$pval, .data$logFC, .data$Protein.Group, .data$Genes ,.data$pep_type) %>% mutate(effectSize = logFC)
+  }
+## to be checked 
+ DE_result <- DE_result %>%
+    filter(grepl(POI, Protein.Group)) %>%
+    select(.data$pval, .data$adjPval,.data$effectSize,.data$Stripped.Sequence, .data$Protein.Group, .data$Proteotypic, .data$Precursor.Id, .data$length, .data$Genes) %>%
+   left_join(prot_seq %>% select(Accession, Protein.Sequence), join_by(Protein.Group == Accession) ) %>% 
+    mutate( total_repeats = str_count(Protein.Sequence, Stripped.Sequence)) %>%
+    uncount(total_repeats, .remove=FALSE) %>%
+    group_by(Stripped.Sequence)%>%
+    mutate(repeat_nr = 1:max(total_repeats),
+           start = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 1],
+           end = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 2],
+           pep_type = classify_trypticity(
+             peptide = Stripped.Sequence[1], 
+             protein = Protein.Sequence[1], 
+             start_pos = start)) %>%
+    mutate(tier = match(Precursor.Id, sort(unique(Precursor.Id))), 
          max_tier = max(tier)) %>%
-  ungroup() %>%
-  arrange(significance, type)
+    ungroup() %>%
+    mutate(
+    type = ifelse(Proteotypic==0 & total_repeats>1, 
+                  "Non-proteotypic, internally repeating",
+                  ifelse(total_repeats>1, 
+                         "Internally repeating",
+                         ifelse(Proteotypic==0, 
+                                "Non-proteotypic", 
+                                "Proteotypic"))) %>%
+      factor(levels = c("Non-proteotypic, internally repeating", 
+                        "Non-proteotypic",
+                        "Internally repeating",
+                        "Proteotypic"))
+    ) # 
+  
+completeness <- assay(se)[DE_result$Precursor.Id,] %>%
+  is.na() %*% model.matrix(~0+grouping) 
+DE_result <- DE_result %>% 
+  mutate(
+    directionality = directionality,
+    missing = 
+      (completeness == matrix(
+        table(grouping), 
+        byrow=TRUE,
+        nrow=nrow(completeness),
+        ncol=ncol(completeness))) |> 
+      apply(1, function(x){
+        h <- which(x) |> names() |> paste0() |> gsub(pattern="grouping",replacement="")
+        return(ifelse(sum(x)==0, NA, h))
+        }), 
+  significance = 
+    ifelse(
+    !is.na(missing),
+    ifelse(directionality,
+           paste0(missing," Missing"),
+           "Missing"),
+    ifelse(
+      adjPval < params$adjPval_thr & !is.na(adjPval),
+      ifelse(directionality,
+             ifelse(effectSize < 0 & !is.na(effectSize),
+                    paste0(groups[1]," Up"),
+                    paste0(groups[2]," Up")),
+             "Significant"),
+      "Not Significant")) |> factor(levels=signif_names),
+    section = ifelse(significance == "Not Significant",
+                     "Not Significant",
+                          ifelse(!is.na(missing),
+                                 "Missing",
+                                 "Significant")) |> 
+  factor(levels = c("Not Significant", "Significant", "Missing"))
+  ) %>% 
+  filter(!(significance=="Not Significant"&is.na(adjPval))) %>%
+ arrange(significance, type)  
 
-  barplot_obj <- make_barplot(part_vis, POI_ = POI, colour_mapping_significance, colour_mapping_type)
+  barplot_obj <- make_barplot( df = DE_result, POI_ = POI, colour_mapping_significance, colour_mapping_type, expand)
  
   return (list(
-        gg = barplot_obj,
-        colour_mapping_significance = colour_mapping_significance,
-        colour_mapping_type = colour_mapping_type
+        gg = barplot_obj
+        ##colour_mapping_significance = colour_mapping_significance,
+        #colour_mapping_type = colour_mapping_type
       ) )
 }
 
@@ -1918,48 +1942,50 @@ part_vis <-
 #' @importFrom ggplot2 ggplot aes geom_rect scale_x_continuous scale_y_continuous labs scale_fill_manual scale_colour_manual theme_bw theme element_blank element_rect element_text guide_legend
 
 # colour = type
-make_barplot <- function ( df, POI_ , colour_mapping_significance, colour_mapping_type){
+make_barplot <- function ( df, POI_ , colour_mapping_significance, colour_mapping_type,expand ){
  
-   ggplot(df , aes(x=start, y = 1)) +
-  geom_rect(aes(xmin = start,
-                xmax = end,
-                ymin = (1/max_tier)*(tier-1),
-                ymax = (1/max_tier)*(tier),
-                fill = significance,
-                group = significance,
-               colour = type, 
-              text = paste0(
-              "Peptide type: ", peptype, "<br>",
-              "Significance: ", significance, "<br>"
-               )),
-              ,
-            linewidth = 0.2) +
-  scale_x_continuous(breaks = c(0:1000*10^(floor(log10(df$length[1]-1)))), 
-                       limits = c(0, df$length[1]),
+   plot <- 
+  ggplot(df, aes(x=start, y = 1)) +
+    geom_rect(aes(xmin = start,
+                  xmax = end,
+                  ymin = (1/max_tier)*(tier-1),
+                  ymax = (1/max_tier)*(tier),
+                  fill = significance,
+                  colour = type
+                  ),
+              linewidth = 0.2) +
+    scale_x_continuous(breaks = c(0:1000*10^(floor(log10(df$length[1]-1)))), 
+                       limits = c(0,df$length[1]),
                        expand = c(0,0)
                        ) +
-  scale_y_continuous(expand = c(0,0)) +
-  labs(title = paste("Significant changes by precursor: "),
-       subtitle = paste(df$Genes[grep(POI_, df$Accession)[1]], "/", POI_, ": ", df$coverage[1], "% coverage", sep = ""),
-       x = "Residue",
-       y = "Precursors",
-       fill = "Significance",
-       colour = "Proteotypicity") +
-  scale_fill_manual(values = colour_mapping_significance) +
-  scale_colour_manual(values = colour_mapping_type, guide = "none") + # hide colour legend 
-  #scale_colour_manual(values = colour_mapping_type,
-  #                    guide = guide_legend(override.aes = list(fill = "transparent"))) +
-  theme_bw() +
-  theme(panel.grid = element_blank(),
-        axis.line.y = element_blank(),
-        axis.text.y = element_blank(),
-        # axis.title.y = element_blank(),
-        axis.ticks.y = element_blank(),
-        # axis.title.y = element_blank(),
-        # panel.border = element_blank(),
-        panel.background = element_rect(fill = "white"),
-        strip.background = element_rect(fill = "white"),
-        strip.text = element_text(face = "bold"))
+    scale_y_continuous(expand = c(0,0)) +
+    labs(title = "Significant changes by precursor",
+         subtitle = paste(df$Genes[1],"/",POI_,": ",
+                          round(calculate_coverage(
+                            df$start,
+                            df$end,
+                            df$length[1])*100,
+                            1), "% coverage", sep = ""),
+         x = "Residue",
+         y = "Precursors",
+         fill = "Significance",
+         colour = "Proteotypicity") +
+    scale_fill_manual(values = colour_mapping_significance) +
+    scale_colour_manual(values = colour_mapping_type, 
+                        guide = guide_legend(override.aes = list(fill = "transparent"))) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          axis.line.y = element_blank(),
+          axis.text.y = element_blank(),
+          # axis.title.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          # axis.title.y = element_blank(),
+          # panel.border = element_blank(),
+          panel.background = element_rect(fill = "white"),
+          strip.background = element_rect(fill = "white"),
+          strip.text = element_text(face = "bold"))
+
+if (expand) return(plot + facet_grid(pep_type~section)) else return(plot)
 }
 
 
