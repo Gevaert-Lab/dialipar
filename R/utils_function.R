@@ -1,4 +1,59 @@
 
+
+
+make_mds <- function(pe){
+
+
+  se <- joinAssays(pe,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") |>  getWithColData("joinedAssay")
+
+se <- scater::runMDS(as(se, "SingleCellExperiment"), exprs_values =1)
+
+eig <- attr(reducedDim(se, "MDS"), "eig")
+
+# Calculate % variance (Eigenvalue / Sum of all Eigenvalues)
+if (!is.null(eig)) {
+  percent_var <- (eig / sum(eig)) * 100
+  xlbl <- paste0(" Component 1 (", round(percent_var[1], 1), "%)")
+  ylbl <- paste0("Component 2 (", round(percent_var[2], 1), "%)")
+} else {
+  # Fallback if no variance is found
+  xlbl <- "MDS1"
+  ylbl <- "MDS2"
+}
+
+
+ as_lean_grob <- function(p) {
+    if (is.null(p)) return(NULL)
+    
+    # 1. Convert ggplot to a gtable/grob (this 'renders' the data into coordinates)
+    g <- ggplotGrob(p)
+    
+    # 2. This object is now just 'points and lines'—the 160MB dataframe is GONE.
+    return(g)
+  }  
+  
+mds_plot <- scater::plotMDS(se, colour_by = "Condition") +
+  # We re-apply geom_point to control alpha and the custom hover text
+  # Using \n creates a new line in the plotly tooltip
+  geom_point(aes(color = colData(se)$Condition, 
+    text = paste0(
+      "Sample: ", colData(se)$CondRep, "<br>",
+      "Condition: ", colData(se)$Condition, "<br>",
+      "Replicate: ", colData(se)$Replicate
+    )
+  ), alpha = 0.8, size = 3) + 
+  labs(x = xlbl, y = ylbl) +
+  theme_bw()
+  
+    
+  
+  return(as_lean_grob(mds_plot) )
+  
+}
+
+
+
+
 #' @title render_quarto_template
 #' 
 #' @description
@@ -48,6 +103,7 @@ render_quarto_template <- function(data_list, template_name, report_fld, report_
   
   # 2. THE BIG CHANGE: Save everything into ONE file
   data_rds_path <- file.path(temp_work_dir, "report_data.rds")
+  log_info(sprintf("Size INSIDE RENDER  : %.2f MB", as.numeric(obj_size(data_list)) / 1024^2))
   saveRDS(data_list, data_rds_path)
   
   log_info('Copy Rds Results ...done')
@@ -104,14 +160,13 @@ render_quarto_template <- function(data_list, template_name, report_fld, report_
 
 
 process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
-      
   fastaproc <- read_fasta_ann(params_report$fasta_file )
       input_data <- parse_input(params_report$input_file_tc, 
                           params_report$input_file_lip,  
                           dual = FALSE, 
                           params_report$design_file)
 
-        qf_base <- create_qfeat_(input_data$design, input_data$lip, input_data$tc)
+        qf_base <- create_qfeat_(input_data$design, input_data$lip, input_data$tc, input_data$diann_flag)
         if (qf_base$status == 1) stop(qf_base$error)
 
         qf_norm <- normalization_scaling_factor(qf_base$result)
@@ -159,27 +214,39 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                                           i_tc = "proteins_tc",
                                            contrasts = colnames(b$contr_exp))
                 if (qf_unpair$status == 1) stop(qf_unpair$error)  
-                df_ann <-  as.data.frame(rowData(qf_unpair$qf[["precursors_lip_norm"]])[c("Precursor.Id", "Protein.Group", "Genes", "Proteotypic", "Stripped.Sequence")])
+                ## remove all :
+                assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm" )
+                # Subset to only these
+                qf_final <- qf_unpair$qf[, , assays_to_keep]         
+                df_ann <-  as.data.frame(rowData(qf_final[["precursors_lip_norm"]])[c("Precursor.Id", "Protein.Group", "Genes", "Proteotypic", "Stripped.Sequence")])
+                
+          log_info(sprintf("Size INPUT qf_unpair: %.2f MB", as.numeric(obj_size(qf_final)) / 1024^2))
+                log_info(sprintf("Size INPUT df_ann: %.2f MB", as.numeric(obj_size(df_ann)) / 1024^2))
                 test_ <-  lapply(params_report$comparisons, 
                     build_df_result,
-                    data= qf_unpair$qf  ,
+                    data= qf_final  ,
                     df_anno = df_ann  ,
                     mapping_df = fastaproc$result,
                     layer= 'precursors_lip_norm' ,
                     layer_ = NULL,
                   params = params_report)
                 names(test_)<- params_report$comparison_label
+                # log_info('Size from the returned list  ')
+                # log_info(sprintf("Size ggplot: %.2f MB", as.numeric(obj_size(test_$`Rapa - Dmso`$plotvolcano_usage)) / 1024^2))
                 #qf_unpair$qf   
+                
+                mds_plot <- make_mds( pe = qf_final  )
+          
+                log_info('Size mds  ')
+                log_info(sprintf("Size ggplot: %.2f MB", as.numeric(obj_size(mds_plot)) / 1024^2))
+                
 
-                assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm" )
-                # Subset to only these
-                qf_final <- qf_unpair$qf[, , assays_to_keep]
         }
         ##  qc -> data for QC
         ##  pe -> Qfeat subseted
        
         quarto_bag <- list( qc_data = qc_ann$result,
-                            pe = qf_final,
+                            mds = mds_plot,
                             res_DE= test_  )
 
         return( list(error= '', status= 0,result =quarto_bag ))
@@ -223,17 +290,23 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
       res_layer <-  rowData(data[[layer]])[[label]]
       res_layer_df <- as.data.frame(res_layer, check.names = FALSE) %>% 
       rownames_to_column(var = "Precursor.Id") 
+      #browser()
+      #res_layer_df <- res_layer_df[, !sapply(res_layer_df, is.list)]
 # --- 2. Process Assay B (Optional, e.g., Protein/Norm) ---
   if (!is.null(layer_)) {
      ## usage for paired 
       res_layer_ <- rowData(data[[layer_]])[[label]]
-      res_layer__df <- as.data.frame(res_layer_, check.names = FALSE) %>% 
+    
+      res_layer__df <- as.data.frame(res_layer_, check.names = FALSE) 
+    
+      #res_layer__df <- res_layer__df[, !sapply(res_layer__df, is.list)] # Drop models
+      res_layer__df <-  res_layer__df %>% 
       rownames_to_column(var = "Precursor.Id") %>% 
       rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -Precursor.Id)
-      browser()
+      #browser()
     # Merge A and B
     res_combined <- full_join(res_layer_df, res_layer__df, by = "Precursor.Id")  
-    }else {
+  }else {
     # === UNPAIRED BRANCH ===
     # Usage is already in res_layer_df, but with suffixes (_usage).
     # We rename them to match the paired prefixes (usage_).
@@ -260,24 +333,73 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
   # top table corrected and not 
   full_toptable <- final_df %>% relocate("Precursor.Id", contains("usage"))
   
-  # first filter the data              
-  #vol_volcano_make(final_df)  
-  # volcano = volcano_out,  POI_l = POI_Plot 
+  ## filtering null adj pval 
 
-    res_usage  <- make_volcano_plot (
-      df = full_toptable,
-      params = params,
-      title = paste0("Volcano ", 'TEST' ),
-      to_save= FALSE
-    )
+  full_toptable <- full_toptable %>% filter( ! is.na(usage_adjPval) & ( ! is.na(adjPval))) 
+  full_toptable <- full_toptable %>% select(Precursor.Id, usage_adjPval,usage_df,usage_logFC,usage_pval,usage_se,
+                            usage_t,Protein.Group,Genes,Proteotypic,Stripped.Sequence, contrast,Protein.Sequence,
+                            length, missed_cleavages, total_repeats,start,end,pep_type,AA_last) %>% 
+                            filter(! is.na(usage_adjPval)) 
+
+   # Define a NEW "Grob Stripper"
+  as_lean_grob <- function(p) {
+    if (is.null(p)) return(NULL)
+    
+    # 1. Convert ggplot to a gtable/grob (this 'renders' the data into coordinates)
+    g <- ggplotGrob(p)
+    
+    # 2. This object is now just 'points and lines'—the 160MB dataframe is GONE.
+    return(g)
+  }
+
+
+  clean_plotly <- function(p) {
+  # 1. Remove the original ggplot object hidden inside
+  p$x$visdat <- NULL 
   
-    res_ncorrect   <- make_volcano_plot (
+ # 2. Scrub environments from any remaining attributes
+  # This targets internal plotly metadata that might still have pointers
+  if (!is.null(p$x$attrs)) {
+    p$x$attrs <- lapply(p$x$attrs, function(x) {
+      attr(x, ".Environment") <- NULL
+      return(x)
+    })
+  }
+
+  # 3. Handle the data list
+  # Plotly stores the processed data here; we just want the raw values, not the env
+  p$x$data <- lapply(p$x$data, function(d) {
+    attr(d, ".Environment") <- NULL
+    return(d)
+  })
+  
+  # 3. Nuclear Strip (Serialization Reboot)
+  p <- unserialize(serialize(p, NULL))
+  
+  return(p)
+}  
+    res_usage  <- make_volcano_plot_plotly (
       df = full_toptable,
       params = params,
       title = paste0("Volcano ", 'TEST' ),
-      usage = FALSE,
       to_save= FALSE
     )
+      #browser()
+      res_usage_plt <- clean_plotly(res_usage$volcano)
+     #browser()
+     
+     #res_usage_grob <- as_lean_grob(res_usage$volcano)
+    
+     res_correct_file   <- make_volcano_plot (
+       df = full_toptable,
+       params = params,
+       title = paste0("Volcano ", 'TEST' ),
+       usage = TRUE,
+      to_save= TRUE
+     )
+  
+    res_ncorrect_grob <- as_lean_grob(res_correct_file$volcano)
+
   prot_seq_ <-  mapping_df %>% filter(Accession %in% res_usage$POI_l)
   
   se <- joinAssays(data,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") %>%  
@@ -288,10 +410,17 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
                   DE_result = full_toptable,   prot_seq = prot_seq_ ,  
                 group_column = 'Treatment'  , params= params )
   
-  return(  list( full_toptable =    full_toptable, 
-                 plotvolcano_usage=  res_usage$volcano , 
-                 plotvolcano_ncorr= res_ncorrect$volcano ,
-                 barplot_ =  barplot_id$gg ))
+  barplot_id  <-  as_lean_grob( barplot_id$gg)
+
+  #plotvolcano_ncorr = res_ncorrect_grob,
+ 
+
+    return(  list( full_toptable    =    full_toptable,
+                   plotvolcano_usage  =  res_usage_plt,
+                   plotvolcano_file  =  res_ncorrect_grob,
+                   barplot_= barplot_id
+                  )
+                )
 
 }
 
@@ -461,7 +590,7 @@ check_design_requirement <- function(df, required_cols) {
 #' @param annotation_df A data frame containing sample metadata (colData).
 #' @param report_file1 A data frame containing quantitative proteomics data.
 #' @param report_file2 Optional; secondary report file (default is NULL).
-#'
+#' @param diann_flag diann or spectronauts dia_direct
 #' @return A list with status, error message, and the resulting QFeatures object.
 #'
 #' @import QFeatures
@@ -474,7 +603,7 @@ check_design_requirement <- function(df, required_cols) {
 #' @importFrom matrixStats rowMins
 #' @importFrom logger log_info
 #'
-create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL) {
+create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, diann_flag) {
 
  calculatedSmallestGroupSize <- function(qf, i, facName){
     se <- MultiAssayExperiment::getWithColData(qf, i = i) #1.
@@ -514,11 +643,17 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL) {
     log_info('Filtering Qvalue/PG.Qvalue < 0.01 ...')
 
     # filterFeatures uses a formula interface; it handles its own variable scope
+    if (diann_flag ){
     qf <- QFeatures::filterFeatures(qf, ~ Q.Value <= 0.01 & 
                                       PG.Q.Value <= 0.01 & 
                                       Lib.Q.Value <= 0.01 & 
                                       Precursor.Id != "" & 
                                       Decoy == 0)
+    }else {
+    qf <- QFeatures::filterFeatures(qf, ~ Q.Value <= 0.01 & 
+                                      PG.Q.Value <= 0.01 & 
+                                      Precursor.Id != "" )
+    }
 
     # 3. Join assays based on Pipeline metadata
     lip_samples <- which(SummarizedExperiment::colData(qf)$Pipeline == "LiP")
@@ -942,94 +1077,6 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
 
 
 
-
-#' @author Andrea Argentini
-#' @title annotate_diann_OLD
-#' @description Annotate and standardize DIA-NN reports: bind reports, join sample annotations,
-#' compute peptide-level metrics (missed cleavages, proteotypic), expand protein accessions,
-#' join FASTA-derived sequence information, compute peptide start/end positions and flanking AAs,
-#' and classify peptides as Tryptic / SemiTryptic / NonTryptic. Returns an annotated data.frame inside a result list.
-#' @param annotation_df Data frame with sample annotation (must contain "Run" for joining)
-#' @param report_file1 Data frame or tibble with DIA-NN report data
-#' @param report_file2 Optional second DIA-NN report data frame or tibble (default NULL)
-#' @param fasta_ann Data frame with FASTA-derived annotations (must contain "Accession" and "Protein.Sequence")
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if no error, 1 if an error was found}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{result}{data.frame; annotated DIA-NN data (NULL if an error occurred)}
-#' @importFrom arrow read_parquet read_tsv_arrow
-#' @importFrom tidyr separate_rows
-#' @importFrom dplyr rename select bind_rows left_join group_by mutate ungroup filter slice n
-#' @importFrom stringr str_split str_count str_locate_all str_sub str_trim str_detect str_remove_all
-#' @importFrom magrittr %>%
-#' @importFrom logger log_info
-
- annotate_diann_OLD <- function(annotation_df, report_file1, report_file2 = NULL,fasta_ann){
-
-     tryCatch( expr = {
-    log_info('Annotation DIA-NN standardize column name ...')
-
-    app <- bind_rows(report_file1, report_file2) %>%
-            select(Run,
-              Precursor.Id,
-              Modified.Sequence,
-              Stripped.Sequence,
-              Precursor.Charge,
-              Protein.Group,
-              Protein.Names,
-              Genes,
-              Precursor.Quantity,
-              Ms1.Area,
-              # Q.Value, #If no MBR is done, all precursors pass the threshold in set in DIA-NN, there's no need to filter further
-              Lib.Q.Value) %>%
-  left_join(annotation_df, by = "Run") %>% filter(Precursor.Quantity>4,
-         Lib.Q.Value <= 0.01)
-       
-  app_a <- app %>% 
-    group_by(Precursor.Id, Condition) %>%
-    filter(n() >= 2)   #Keep only precursors which were found in at least 2 samples per condition
-
-
-app_b <- app_a %>%
-  mutate(
-    Genes = str_remove_all(Genes, "_.*?(?=;|$)"),
-    missed_cleavages = str_count(Stripped.Sequence, "[RK](?!(P|$))"),
-    Proteotypic     = ifelse(str_detect(Protein.Group, ";"), 0, 1),
-    Accession       = Protein.Group         # create column to split so original stays
-  ) %>%
-  separate_rows(Accession, sep = ";") %>%
-  mutate(Accession = str_trim(Accession)) %>%  # trim spaces if any
-  ungroup()
-  ## splited in two parts
-  log_info('Annotation spectronaut adding fasta info ...')
-  
-  app_c <- app_b %>%  left_join(fasta_ann, by = "Accession") %>%   # option if fasta file is used
-  mutate(total_repeats = str_count(Protein.Sequence, Stripped.Sequence)) %>%
-  group_by(Run, Stripped.Sequence, Accession) %>%
-  dplyr::slice(rep(1, total_repeats[1])) %>%
-  mutate(repeat_nr = 1:max(total_repeats)) %>%
-  group_by(Stripped.Sequence, Accession) %>%
-  mutate(start = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 1],
-         end = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 2],
-         AA_before = str_sub(Protein.Sequence[1], start-1, start-1),
-         AA_last = str_sub(Stripped.Sequence[1], -1, -1),
-         AA_after = str_sub(Protein.Sequence[1], end+1, end+1),
-         pep_type = ifelse(AA_before %in% c("K", "R") & (AA_last %in% c("K", "R")) | #internal tryptic peptides
-                          (AA_before %in% c("K", "R") & AA_after == "") | #C-terminal tryptic peptides
-                          ((AA_before == "" | (AA_before == "M" & start==2)) & AA_last %in% c("K", "R")), #N-terminal tryptic peptides
-                           "Tryptic",
-                          ifelse(AA_before %in% c("K", "R") | (AA_last %in% c("K", "R")),
-                                 "SemiTryptic",
-                                 "NonTryptic"))) %>% ungroup()
-
-  return( list(error= '', status= 0, result =app_c ))
-     },error = function(err){
-    print(paste("Annotation on Spectrounaut :  ",err))
-    return( list(error= err, status= 1,result =NULL ))
-  } )
-
-}
-
 #' @author Andrea Argentini
 #' @title parse_input
 #' @description Read and parse input parquet file(s) and the experiment design file. Detects whether reports are in DIA‑NN format, reads TC and/or LiP reports (from one or two parquet files depending on 'dual'), validates the design using check_design_requirement, and returns parsed reports along with the design and a diann_flag.
@@ -1071,7 +1118,23 @@ parse_input <- function(input_parquet_tc, input_parquet_lip, dual, input_design)
       }
       
       diann_flag <- is_diann(LiP_report)
-      
+     if (diann_flag == FALSE ){ 
+      LiP_report <- LiP_report %>%
+                rename(
+                  Run = R_FileName,   # nieuwe naam = oude naam
+                  Genes = PG_Genes,
+                  Protein.Group = PG_ProteinGroups,
+                  Protein.Names = PG_ProteinNames,
+                  PG.Q.Value = PG_Qvalue,
+                  Precursor.Id = PEP_GroupingKey,
+                  Stripped.Sequence = PEP_StrippedSequence,
+                  #Decoy = EG_IsDecoy,
+                  Precursor.Charge = FG_Charge,
+                  Q.Value = FG_Qvalue,
+                  Precursor.Quantity = FG_MS2RawQuantity
+                )
+              }
+
       # 2. Loading and Validating Design
       log_info('Reading experiment Design file ...')
       design <- arrow::read_tsv_arrow(input_design)
@@ -1213,62 +1276,6 @@ app_b <- app_a %>%
 }
 
 
-#' @author Andrea Argentini
-#' @title consensus_normalisation_OLD
-#' @description Function to calculate scaling factors for median normalisation based on precursors that are identified in every sample. Computes per-sample medians on shared precursors, derives scaling factors, and applies them to produce normalized precursor intensities.
-#' @param report Data frame or tibble containing at least the columns "CondRep", "Precursor.Id", and "Precursor.Quantity"
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{normalized}{data.frame; original report augmented with column normPQ (normalized log2 precursor quantity)}
-#'   \item{scale_factor}{data.frame; per-sample medians and computed scaling factors}
-#' @importFrom arrow read_parquet read_tsv_arrow
-#' @importFrom dplyr distinct select group_by mutate ungroup n_distinct summarise
-#' @importFrom logger log_info
-
-
-
-consensus_normalisation_OLD <- function(report){
-
-  tryCatch( expr = {
-
-    log_info('Consensus normalization ...')
-
-   report_long <- report %>%
-      distinct(CondRep, Precursor.Id, .keep_all = TRUE) %>%
-      select(CondRep, Pipeline, Precursor.Id, Precursor.Quantity) %>%
-      group_by(Pipeline) %>% 
-         mutate(samples = n_distinct(CondRep)) %>% 
-      group_by(Precursor.Id) %>% 
-      filter(n_distinct(CondRep)==samples) %>% 
-      group_by(CondRep) %>% 
-      mutate(log_Precursor.Quantity = log2(Precursor.Quantity))
-
-  
-    # Step 2: compute sample medians safely
-    log_info('Computing scaling factor ...')
-    scaling_factors <- report_long %>%
-      
-      summarise(sample_shared_median = median(log_Precursor.Quantity), .groups = "drop") %>%
-      ungroup() %>% 
-      mutate(sample_scaling_factor = median(sample_shared_median) - sample_shared_median)
-
-    # Step 3: apply scaling factors to original report
-    log_info('Correcting original intensity ...')
-
-    report_norm <- report %>%
-      mutate(normPQ = log2(Precursor.Quantity) +
-               scaling_factors$sample_scaling_factor[match(CondRep, scaling_factors$CondRep)])
-
-    return(list(error = '', status = 0, normalized = report_norm, scale_factor = scaling_factors))
-
-  },error = function(err){
-      print(paste(" Consensus normalization  :  ",err))
-      return( list(error= err, status= 1,normalized =NULL ))
-  } )
-}
-
-
 
 #' @author Andrea Argentini
 #' @title calculate_coverages
@@ -1351,148 +1358,6 @@ tryCatch( expr = {
 
 
 #' @author Andrea Argentini
-#' @title input_qf
-#' @description Create a QFeatures object from a precursor-level input data.frame. The function pivots quantification to wide format, selects the appropriate quantification column depending on flag_tc (normPQ for TC, adjPQ for LiP), filters the design for the chosen pipeline, and returns the QFeatures precursor assay and the filtered design.
-#' @param df_input Data frame or tibble containing precursor-level data (must include Run, Precursor.Id, Protein.Group, repeat_nr and the quantification columns like normPQ or adjPQ)
-#' @param design Data frame with experiment design (must include Run, Pipeline, CondRep, etc.)
-#' @param columns_not_wide Character vector of identifier/feature columns to retain prior to pivoting to wide format
-#' @param flag_tc Logical; TRUE to process TC (uses normPQ), FALSE to process LiP (uses adjPQ). Default TRUE.
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{qf_pe}{QFeatures object; precursor-level QFeatures (NULL on error)}
-#'   \item{design_filt}{data.frame; filtered design used as colData for the QFeatures object (NULL on error)}
-#' @importFrom dplyr distinct
-#' @importFrom tidyr drop_na
-#' @importFrom stringr str_detect
-#' @importFrom QFeatures readQFeatures
-#' @importFrom logger log_info
-
-
-input_qf <- function(df_input  , design , columns_not_wide, flag_tc = TRUE   ){
-
-tryCatch( expr = {
-  if (flag_tc  == TRUE){
-      quantCol = "normPQ"
-      filt_pipeline = 'TC'
-      }else{
-        quantCol = "adjPQ"
-        filt_pipeline = 'LiP'
-      }
-
-  log_info(paste0('Creating Qfeature obj for ', filt_pipeline )) 
-
- input_wide <- df_input %>%
-    filter( repeat_nr==1) %>%
-    distinct(Run, Precursor.Id, Protein.Group, .keep_all = T) %>%
-    dfToWideMsqrob(precursorquan = quantCol,
-      wide_colums = columns_not_wide )  
-
-  if (flag_tc  == TRUE){
-    # for TC  no NAN allowed
-     input_wide <- input_wide %>% drop_na()
- 
-  }
-
-  
-  if (flag_tc  == TRUE){
-     design_filt <- design %>% filter(Pipeline  == filt_pipeline ) %>% rename(quantCols = Run)
-      }else{
-       ## lip 
-      design_filt <- design %>% filter(Pipeline  == filt_pipeline ) %>% 
-        rename(quantCols = Run) %>%
-        rename(SampleName = CondRep  ) %>%  mutate(Condition = as.factor(Condition))
-    }
-
-  ## create qfeat obj
-  qf_ <- readQFeatures( input_wide ,
-            fnames = "Precursor.Id",
-            quantCols =  str_detect(names(input_wide), paste( columns_not_wide , collapse = "|"), negate=TRUE) ,
-            colData = design_filt,
-            name = "precursor")
-  
-  
-
-  return ( list( error= '', status= 0, qf_pe = qf_,  design_filt = design_filt ))
-},error = function(err){
-    print(paste(" QF Creation :  ",err))
-    return( list(error= err, status= 1, qf_pe = NULL,  design_filt = NULL ))
-  } )
-
-}
-
-
-
-
-
-
-#' @author Andrea Argentini
-#' @title processing_tc_qfeat
-#' @description Aggregate precursor-level QFeatures to proteins, filter proteins with more than one peptide,
-#' compute per-protein median deviations and drug-specific abundance adjustment factors to support normalization.
-#' The function returns a data.frame of adjustment factors that can be applied downstream.
-#' @param input_pe QFeatures object (precursor-level) to aggregate (expects a "precursor" assay)
-#' @param design Data frame with experiment design (must include a "Run" column and "Drug" column for grouping)
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{adj_scaling_df}{data.frame; per-protein and per-drug abundance adjustment factors (NULL on error)}
-#' @importFrom dplyr distinct
-#' @importFrom stringr str_detect
-#' @importFrom QFeatures readQFeatures aggregateFeatures filterFeatures longFormat
-#' @importFrom logger log_info
-#' @importFrom stats median
-
-
-processing_tc_qfeat <- function(input_pe  , design    ){
-
-  tryCatch( expr = {
-
-          log_info('Aggregating to protein level ...')
-          input_pe_ <- aggregateFeatures(input_pe,
-                                i = "precursor",
-                                fcol = "Protein.Group",
-                                name = "proteins",
-                                fun = MsCoreUtils::robustSummary,
-                                na.rm = TRUE)
-          ## work aroung for the filtering
-         
-
-          prot <- input_pe_[["proteins"]]
-          prot <- prot[rowData(prot)$.n > 1, ]
-          input_pe_[["proteins"]] <- prot    
-    
-          log_info('Filtering more than one petides  ...')
-          #input_pe_ <- filterFeatures(input_pe_ ,
-          #                      ~.n >1 ,
-          #                      "proteins",
-          #                      keep = F)
-          log_info('Computing scaling factor  ...')
-           ## TODO  hard coded stuff 
-          abundance_adjustment_factors <-
-            longFormat(input_pe_[["proteins"]]) %>%
-            rename( "Run" = "colname",
-                     "Protein.Group"= "rowname")%>%
-            left_join(design, join_by(Run)) %>%
-            group_by(Protein.Group) %>%
-            mutate(deviation = value - median(value, na.rm = TRUE)) %>%
-            group_by(Protein.Group,  Condition, Treatment) %>%
-            summarise(abundance_adjustment = median(deviation, na.rm = TRUE)) %>%
-            mutate(ID = paste(Protein.Group, Treatment)) %>%
-            ungroup()
-    
-      return ( list( error= '', status= 0 ,  adj_scaling_df = abundance_adjustment_factors  ))
-  },error = function(err){
-    print(paste(" TC computing scaling  :  ",err))
-    return( list(error= err, status= 1,adj_scaling_df =NULL ))
-  } )
-
-
-  
-}
-
-
-#' @author Andrea Argentini
 #' @title msqrob_model
 #' @description Fit msqrob2 models and perform hypothesis testing for differential expression.
 #' Given a QFeatures object, a parameter list (including a model formula and comparisons),
@@ -1557,6 +1422,240 @@ msqrob_model <- function(pe, params, layer  ){
 }
 
 
+make_volcano_plot_plotly <- function(df, params, title, annotation_fields = NULL, to_save = FALSE, usage = TRUE) {
+  # Compose tooltip string based on requested annotation fields
+  if (to_save == FALSE) {
+    df <- df %>%
+        mutate(tooltip_text = paste0(
+          "Gene: ", Genes, "<br>",
+          "logFC: ", round(usage_logFC, 2), "<br>",
+          "adjPval: ", formatC(usage_adjPval, format="e", digits=2)
+        ))
+  }
+  
+  if (usage) { 
+    df <- df %>% 
+      select(.data$usage_adjPval, .data$usage_pval, .data$usage_logFC, .data$Protein.Group, .data$Genes, .data$pep_type, any_of("tooltip_text")) %>%  
+      mutate(adjPval = usage_adjPval,
+             pval = usage_pval,
+             logFC = usage_logFC) 
+  } else {
+    df <- df %>% select(.data$adjPval, .data$pval, .data$logFC, .data$Protein.Group, .data$Genes, .data$pep_type, any_of("tooltip_text")) 
+  }
+  
+  # Filter significant Protein Groups
+  sigPG <- df %>%
+    filter(!is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
+    arrange(.data$pval) %>% 
+    pull(.data$Protein.Group)
+  
+  nPOI <- function(x) sapply(seq_along(x), function(i,x){length(unique(x[1:i]))}, x=x)
+  POI_Plot <- sigPG[nPOI(sigPG) <= 10] %>% unique()
+  
+  POI_Plot_Genes <- df %>%
+    select(.data$Protein.Group, .data$Genes) %>%
+    filter(Protein.Group %in% POI_Plot) %>%
+    pull(.data$Genes) %>% 
+    unique() 
+  
+  adjAlpha <- params$adjPval_thr * mean(df$adjPval <= params$adjPval_thr, na.rm = TRUE)
+  
+  # Define Interest Levels
+  levels_interest <- c(POI_Plot_Genes, "Relevant", "Not Relevant")
+  
+  # 1. Build the Base Color Vector (from your pal_npg palette)
+  poi_cols <- ggsci::pal_npg()(length(POI_Plot)) 
+  names(poi_cols) <- POI_Plot_Genes
+  my_colors <- c(poi_cols, "Relevant" = "red", "Not Relevant" = "black")
+  
+  # 2. Build the Alpha Vector
+  my_alphas <- c(setNames(rep(1, length(POI_Plot)), POI_Plot_Genes), 
+                 "Relevant" = 0.2, 
+                 "Not Relevant" = 0.1)
+  
+  # 3. Combine Colors and Alphas into Plotly-friendly RGBA strings
+  rgba_colors <- mapply(function(color, alpha) {
+    rgb_vals <- col2rgb(color)[, 1]
+    sprintf("rgba(%d, %d, %d, %f)", rgb_vals[1], rgb_vals[2], rgb_vals[3], alpha)
+  }, my_colors[levels_interest], my_alphas[levels_interest])
+  names(rgba_colors) <- levels_interest
+  
+  # Mapping R pch (15-18) to Plotly symbols safely
+  pep_types <- unique(df$pep_type)
+   plotly_symbols <- c("square", "circle", "triangle-up", "diamond")[1:length(pep_types)]
+   names(plotly_symbols) <- pep_types
+  
+
+
+  # Assign relevance and interest
+df <- df %>% 
+    filter(!is.na(adjPval), !is.na(logFC)) %>%
+    mutate(
+      relevance = ifelse(adjPval <= params$adjPval_thr & abs(logFC) >= params$FC_thr, 
+                         "Relevant", "Not Relevant"),
+      interest = ifelse(Protein.Group %in% POI_Plot, 
+                        as.character(Genes), 
+                        as.character(relevance)) %>%
+                 factor(levels = c(POI_Plot_Genes, "Relevant", "Not Relevant")),
+      
+      # PRE-CALCULATE RGBA COLOR 
+      point_color = mapply(function(col, alph) {
+        rgb_vals <- col2rgb(col)[,1]
+        sprintf("rgba(%d, %d, %d, %f)", rgb_vals[1], rgb_vals[2], rgb_vals[3], alph)
+      }, my_colors[as.character(interest)], my_alphas[as.character(interest)]),
+      
+      # PRE-CALCULATE SYMBOL 
+      point_symbol = plotly_symbols[as.character(pep_type)]
+    ) %>%
+    arrange(desc(interest))
+  
+   
+  #saveRDS(df, 'vol_obj.rds')
+
+    ## subsample : 
+  df_sig <- df %>% filter(interest != "Not Relevant")
+
+# Sample only 10% of the noise
+  df_noise <- df %>% filter(interest == "Not Relevant") %>% dplyr::sample_frac(0.1)
+
+# Plot this instead
+  df_for_plot <- bind_rows(df_sig, df_noise)
+  # ---------------------------------------------------------
+  # GENERATE PLOTLY WITH SPLIT LEGENDS
+  # ---------------------------------------------------------
+  
+  hx <- -100
+  hy <- -100
+
+  # Initialize empty plot
+  volcano_out <- plot_ly()
+  
+  # 1. Add the actual data points but hide them from the legend
+  volcano_out <- volcano_out %>% add_trace(
+    data = df_for_plot,
+    x = df$logFC,
+    y =  -log10(df$pval),
+    type = 'scatter',
+    mode = 'markers',
+   marker = list(
+        color = df$point_color, 
+        symbol = df$point_symbol,
+        size = 7, 
+        line = list(width = 0)
+      ),
+
+    text = df$tooltip_text,
+    hoverinfo = "text",
+    showlegend = FALSE # Hide merged default legend
+  )
+  
+ # 2. "Interest" Legend Header (Invisible trace, acts as a title)
+  volcano_out <- volcano_out %>% add_trace(
+
+    x = hx, y = hy, 
+    type = 'scatter', mode = 'lines',
+    name = '<b>Interest</b>',
+    line = list(width = 0, color = 'rgba(0,0,0,0)'), # Completely invisible marker
+    hoverinfo = "none",
+    showlegend = TRUE
+  )
+  
+  # 3. Interest Legend Items
+  present_interests <- intersect(levels_interest, unique(as.character(df$interest)))
+  for (int_name in present_interests) {
+    volcano_out <- volcano_out %>% add_trace(
+       x = hx, y = hy, 
+      type = 'scatter', mode = 'markers',
+      name = paste0("&nbsp;&nbsp;&nbsp;", int_name), # Indent the items slightly
+      marker = list(color = unname(rgba_colors[int_name]), size = 9, symbol = "circle"),
+      hoverinfo = "none",
+      showlegend = TRUE
+    )
+  }
+ # 4. "Peptide type" Legend Header
+  volcano_out <- volcano_out %>% add_trace(
+    x = hx, y = hy, 
+    type = 'scatter', mode = 'lines',
+    name = '<br><b>Peptide type</b>', # <br> adds a blank line above it
+    line = list(width = 0, color = 'rgba(0,0,0,0)'),
+    hoverinfo = "none",
+    showlegend = TRUE
+  )
+  
+  # 5. Peptide Type Legend Items
+  for (pt_name in pep_types) {
+    volcano_out <- volcano_out %>% add_trace(
+       x = hx, y = hy, 
+      type = 'scatter', mode = 'markers',
+      name = paste0("&nbsp;&nbsp;&nbsp;", pt_name),
+      marker = list(color = "grey50", size = 9, symbol = unname(plotly_symbols[pt_name])),
+      hoverinfo = "none",
+      showlegend = TRUE
+    )
+  }
+  
+ x_min <- min(df$logFC, na.rm = TRUE) - 0.5
+x_max <- max(df$logFC, na.rm = TRUE) + 0.5
+y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
+
+  # 6. Apply Layout
+  volcano_out <- volcano_out %>%
+    layout(
+      showlegend = TRUE, 
+      legend = list(
+        title = list(text = ""),
+        orientation = "v",      
+        x = 1.02,               
+        y = 1,
+        xanchor = "left"
+      ),
+      # LOCK THE AXES HERE
+      xaxis = list(
+        title = "Log<sub>2</sub>(Fold change)", 
+        range = c(x_min, x_max) # <--- Prevents zooming to -100
+      ),
+      yaxis = list(
+        title = "-Log<sub>10</sub>(P value)", 
+        range = c(0, y_max)           # <--- Prevents zooming to -100
+      ),
+      plot_bgcolor = 'white',
+      paper_bgcolor = 'white',
+      shapes = list(
+        list(type = "line", x0 = 0, x1 = 1, xref = "paper", y0 = -log10(adjAlpha), y1 = -log10(adjAlpha), line = list(color = "black", dash = "dash")),
+        list(type = "line", x0 = -params$FC_thr, x1 = -params$FC_thr, y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1)),
+        list(type = "line", x0 = params$FC_thr, x1 = params$FC_thr, y0 = 0, y1 = 1, yref = "paper", line = list(color = "black", width = 1))
+      )
+    )
+  
+ volcano_out$x$attrs <- lapply(volcano_out$x$attrs, function(trace) {
+    lapply(trace, function(attr_val) {
+      if (inherits(attr_val, "formula")) {
+        environment(attr_val) <- .GlobalEnv # or emptyenv()
+      }
+      return(attr_val)
+    })
+  })
+
+  # --- 2. Scrub the Data slot ---
+  # Native plotly stores the actual data in $x$data
+  # Sometimes internal pointers here also hold environments
+  if (!is.null(volcano_out$x$data)) {
+    volcano_out$x$data <- lapply(volcano_out$x$data, function(d) {
+      attr(d, ".Environment") <- NULL
+      return(d)
+    })
+  }
+
+  # --- 3. The Nuclear Option (Deep Copy) ---
+  # This forces R to re-index the object without any parent references
+  volcano_out <- unserialize(serialize(volcano_out, NULL))
+  
+  
+  return(list(volcano = volcano_out, POI_l = POI_Plot))
+}
+
+
+
 #' @author Andrea Argentini
 #' @title make_volcano_plot
 #' @description Generates a volcano plot from differential expression results using ggplot2.
@@ -1580,6 +1679,7 @@ msqrob_model <- function(pe, params, layer  ){
 
 make_volcano_plot <- function(df, params, title, annotation_fields = NULL,   to_save = FALSE, usage= TRUE  ) {
   # Compose tooltip string based on requested annotation fields
+  
   if (to_save== F ){
     df <- df %>%
       mutate(
@@ -1650,7 +1750,11 @@ make_volcano_plot <- function(df, params, title, annotation_fields = NULL,   to_
            factor(levels=c(POI_Plot_Genes,"Relevant","Not Relevant"))) %>%
     arrange(desc(.data$interest)) 
 
-  volcano_out <- ggplot(df, 
+  plot_df <- df %>%
+    filter(!is.na(adjPval)) %>%
+    select(logFC, pval, interest, pep_type)
+
+  volcano_out <- ggplot(plot_df, 
           aes(x = logFC,
               y = -log10(pval))) +
       geom_hline(yintercept = -log10(adjAlpha)) +
@@ -1672,126 +1776,16 @@ make_volcano_plot <- function(df, params, title, annotation_fields = NULL,   to_
            alpha = "Interest",
            shape = "Peptide type") +
       theme_bw()
-  
+  volcano_out$plot_env <- emptyenv()
+  #log_info('Size ggplot (inside make) ')
+  #log_info(sprintf("Size ggplot: %.2f MB", as.numeric(obj_size(volcano_out)) / 1024^2))
+
+
   return(list ( volcano = volcano_out,  POI_l = POI_Plot ))
 
 }
 
 
-
-#' @author Andrea Argentini
-#' @title dep_volcano_barcode
-#' @description Generates volcano plots and returns both raw and annotated differential expression results for a given contrast. Assumes model results are stored in the specified layer (e.g., "proteinRS", "peptideNorm"); selects proteins of interest (POIs), annotates significance and interest, prepares interactive and static volcano plots, and produces barcode plots for POIs.
-#' @param label Character. Contrast label identifying the result column in rowData (e.g., "condB-condA")
-#' @param data QFeatures object containing proteomics results and rowData with DE results
-#' @param params List. Analysis parameters; expected entries include numeric FC_thr, adjPval_thr and a character vector poi (optional)
-#' @param layer Character. Name of the assay/layer in the QFeatures object where rowData contains the result table
-#' @param df_anno Data.frame. Annotated Lip/experiment dataframe used to produce barcode plots
-#' @return A list with the following elements:
-#'   \item{toptable}{data.frame; differential expression results filtered to non-NA adjPval}
-#'   \item{volcano}{ggplot object; volcano plot prepared for interactive display (tooltip text added when to_save = FALSE)}
-#'   \item{volcano2file}{ggplot object; static/annotated volcano plot suitable for saving/export (to_save = TRUE)}
-#'   \item{barcode_plot}{list; barcode plot objects (one per POI)}
-#'   \item{POI}{character vector; proteins of interest used for plotting (may be NULL)}
-#' @importFrom SummarizedExperiment rowData
-#' @importFrom tibble rownames_to_column
-#' @importFrom dplyr mutate case_when filter left_join arrange desc pull select case_match slice
-#' @importFrom stringr str_subset
-
-
-dep_volcano_barcode <- function ( label, data  ,params,layer , df_anno ){
-  cmp = label
-
-  ## get data
-  res <- rowData(data[[layer]])[[label]] %>% rownames_to_column(var = "precursor.Id")
-  data_df <- as.data.frame(rowData(data[[layer]])) %>% rownames_to_column("precursor.Id")
-  temp <- data_df %>% dplyr::select(precursor.Id,  Protein.Group, Accession, Genes,pep_type , total_repeats, start, end )
-  all_res <- res %>% left_join(temp, by = "precursor.Id")
-  
-  all_res__ <- all_res %>% 
-      group_by(precursor.Id) %>% 
-      dplyr::slice(rep(1, str_count(Protein.Group, ";")+1)) %>%
-      mutate(Accession = unlist(str_split(Protein.Group[1], ";"))) %>% 
-      ungroup()
-  
-  
-  #  mutate(Proteotypic = ifelse(str_detect(Protein.Group, ";"), 0, 1)) %>%  I think we do not use it 
-  #" select POI
-  if  (    all(!(params$poi == '')  &  (length( params$poi) >= 1)) ){
-    POIs <- params$poi
-    if ( !all(params$poi %in% all_res$Accession)){ 
-      stop('Uniprot IDs not recognized or not detected in your result ! ')
-    } 
-
-  }else{
-    POIs <-all_res %>%
-          dplyr::filter(!is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
-          dplyr::pull(.data$Accession) %>%
-          unique()
-  }
- 
-
-  if(length(POIs) > 10){POIs <- NULL}
-  # add annotation
- 
-  all_res_f <- all_res__ %>%
-    filter(!is.na(adjPval)) %>%
-   mutate(significance = ifelse(adjPval<=0.05 & abs(logFC)>=1, "Significant", "Not Significant"),
-         interest = ifelse(Accession %in% POIs, Genes, significance) %>% 
-           factor(levels = c(all_res__$Genes[match(POIs, all_res__$Accession)], "Significant", "Not Significant")),
-         pep_type = case_match(pep_type,
-                              "SemiTryptic" ~ "Semi-Tryptic",
-                              "Tryptic" ~ "Tryptic",
-                              "NonTryptic" ~ "Non-Tryptic") %>% 
-           factor(levels = c("Tryptic", "Semi-Tryptic", "Non-Tryptic"))) %>% 
-    arrange(desc(interest))
-  
-
-  DEall <- all_res_f
-
-
-  volcano <- make_volcano_plot (
-      df = all_res_f,
-      params = params,
-      title = paste0("Volcano ", cmp ),
-      annotation_fields = c("Genes",'pep_type', 'significance', 'start', 'end' ),
-      poi_vis= POIs,
-      to_save= FALSE
-    )
-    #perc_field <- rowData(data[['proteinRS']]) %>% colnames() %>%  stringr::str_subset('perc')
-   # export table
-
-
-  ## volcano annotate with gene name
-
-
-# log_info(paste0(cmp,' preparing annotated volcano plot ...'))
-
-p_toFile <-  make_volcano_plot (
-      df = all_res_f,
-      params = params,
-      title = paste0("Volcano ", cmp ),
-      annotation_fields = c("Accession" ),
-      poi_vis= POIs,
-      to_save= TRUE
-    )
-  
-  #LiP_annotated --> missing 
- ## barcode plot  
-barcode <- lapply(POIs, plot_barcode, df_anno, "Treatment", DEall, T )  
-names(barcode) <- POIs
-barcode_plotly_list <- lapply(barcode, function(el) {
-   #el$gg is the ggplot, el$colour_mapping_significance is the mapping
-  plotly_from_ggplot(el$gg, el$colour_mapping_significance, title_center = 0.0, top_margin = 80, tooltip = "text")
-})
-  
-return ( list( toptable =DEall , 
-              volcano = volcano, 
-            volcano2file = p_toFile , 
-            barcode_gg = barcode , 
-            barcode_plty = barcode_plotly_list,  POI = POIs ) )
-
-}
 
 #' @author Andrea Argentini
 #' @title plot_barcode
@@ -1989,83 +1983,9 @@ if (expand) return(plot + facet_grid(pep_type~section)) else return(plot)
 }
 
 
-#' @author Andrea Argentini
-#' @title Convert ggplot to interactive plotly with grouped legends
-#' @description
-#' Convert a ggplot2 object to an interactive plotly object (via ggplotly),
-#' remap trace names to significance group labels (based on the names of
-#' colour_mapping_significance) and assign legend groups so traces that
-#' represent the same significance category appear as a single legend entry.
-#' Only the first trace in each legend group is shown in the legend. The
-#' function also preserves ggplot title and subtitle in the plotly layout and
-#' allows adjusting title horizontal alignment and top margin. The ggplotly
-#' tooltip argument can be controlled with the `tooltip` parameter.
-#'
-#' @param ggp A ggplot object to convert (created with ggplot2).
-#' @param colour_mapping_significance A named character vector whose names are
-#'   significance category labels to match against ggplotly trace names. Only
-#'   the names are used for matching/legend grouping; values (colours) are not
-#'   used by this function but are commonly provided for downstream styling.
-#' @param title_center Numeric between 0 and 1 specifying the horizontal
-#'   position of the title in the plotly layout (0 = left, 0.5 = center,
-#'   1 = right). Default is 0.0 (left).
-#' @param top_margin Integer top margin in pixels to apply in the plotly
-#'   layout. Default is 70.
-#' @param tooltip Character scalar passed to ggplotly's tooltip argument
-#'   (e.g. "text", "x", "y", or a vector). Default is "text".
-#'
-#' @return A plotly object (list-like) produced by ggplotly with adjusted
-#'   trace legend groups and layout title/margin.
-#' @importFrom plotly ggplotly
-#' @importFrom magrittr %>%
-plotly_from_ggplot <- function(ggp, colour_mapping_significance, title_center = 0.0, top_margin = 70, tooltip = "text") {
-  pp <- ggplotly(ggp, tooltip = tooltip)
 
-  sig_names <- names(colour_mapping_significance)
 
-  # Map ggplotly trace names to significance labels (if matched) and set legendgroup
-  for (i in seq_along(pp$x$data)) {
-    tr <- pp$x$data[[i]]
-    nm <- if (!is.null(tr$name)) tr$name else ""
-    matched <- sig_names[vapply(sig_names, function(s) grepl(s, nm, fixed = TRUE), logical(1))]
-    if (length(matched) >= 1) {
-      matched <- matched[1]
-      pp$x$data[[i]]$legendgroup <- matched
-      pp$x$data[[i]]$name <- matched
-    }
-  }
 
-  # show only the first trace per legendgroup
-  seen <- character(0)
-  for (i in seq_along(pp$x$data)) {
-    lg <- pp$x$data[[i]]$legendgroup
-    if (!is.null(lg)) {
-      if (lg %in% seen) {
-        pp$x$data[[i]]$showlegend <- FALSE
-      } else {
-        pp$x$data[[i]]$showlegend <- TRUE
-        seen <- c(seen, lg)
-      }
-    }
-  }
-
-  # ensure layout title + margin; use ggplot labels if present
-  gtitle <- if (!is.null(ggp$labels$title)) ggp$labels$title else NULL
-  gsubtitle <- if (!is.null(ggp$labels$subtitle)) ggp$labels$subtitle else NULL
-  title_text <- if (!is.null(gtitle) || !is.null(gsubtitle)) {
-    paste0(
-      if (!is.null(gtitle)) paste0("<b>", gtitle, "</b>") else "",
-      if (!is.null(gsubtitle)) paste0("<br>", gsubtitle) else ""
-    )
-  } else NULL
-
-  pp <- pp %>% layout(
-    title = list(text = if (!is.null(title_text)) title_text else "", x = title_center),
-    margin = list(t = top_margin)
-  )
-
-  pp
-}
 
 #' @author Andrea Argentini
 #' @title check_dependencies

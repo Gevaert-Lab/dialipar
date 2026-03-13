@@ -19,6 +19,7 @@ Depends:
 Imports:
   arrow,
   dplyr,
+  scater,
   stringr,
   seqinr,
   IRanges,
@@ -37,6 +38,7 @@ Imports:
   ggrepel,
   msqrob2,
   quarto,
+  plotly,
   logger,
   fs,
   knitr,
@@ -47,6 +49,7 @@ Imports:
 Suggests: 
     rmarkdown,
     testthat (>= 3.0.0),
-    xfun
+    xfun,
+    lobstr
 RoxygenNote: 7.3.3
 VignetteBuilder: knitr

@@ -43,7 +43,7 @@ params:
  #| output: false
 
  required_packages = c('QFeatures',"ggrepel","tidyr","tibble","heatmaply","pcaMethods",
-                       "plotly","DT","MSnbase",'gridExtra','dplyr','stringr' ,"ggcorrplot",'logger','pander','ggsci','GGally','yaml','scater','Glimma')
+                       "plotly","DT","MSnbase",'gridExtra','dplyr','stringr' ,"ggcorrplot",'logger','pander','ggsci','GGally','yaml','scater','Glimma','grid','patchwork')
 # #print(required_packages)
  dialipar::check_dependencies(required_packages)
 
@@ -121,16 +121,25 @@ expdesign <- read.delim(params$design_file, sep="\t")
 
 
 data_ <- readRDS(params$data_path)
-log_info({str(data_, max.level = 2)})
 
-actual_data <- data_$result 
+#actual_data <- data_$result 
 
 # Now map the variables
-complete_rep <- actual_data$qc_data 
-pe           <- actual_data$pe
-res_DE       <- actual_data$res_DE
+complete_rep <- data_$qc_data 
+mds_plot <- data_$mds
+res_DE       <- data_$res_DE
 
+# log_info('DEbug RDs data bag')
+# log_info("--------------------------------------------------")
+# log_info(sprintf("📊 QC Data Rows:    [%d]", nrow(complete_rep)))
+# log_info(sprintf("🧪 DE Comparisons:  [%s]", paste(names(res_DE), collapse = ", ")))
+# log_info("--------------------------------------------------")
 
+# log_info("--- Quarto Side Debug ---")
+# log_info(paste0("Object type of data_: ", class(data_)))
+# log_info(paste0("Top level keys: ", paste(names(data_), collapse = ", ")))
+# log_info(paste0("Is res_DE a list? ", is.list(data_$res_DE)))
+# log_info(paste0("Length of res_DE: ", length(data_$res_DE)))
 
 
 
@@ -343,38 +352,9 @@ ggsave(   file.path(params$folder_prj, "Result", "miss_cleavage_peptide.pdf"),pl
 
 ```{r }
 
-se <- joinAssays(pe,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") |>  getWithColData("joinedAssay")
+grid.draw(mds_plot)
 
-se <- scater::runMDS(as(se, "SingleCellExperiment"), exprs_values =1)
-
-eig <- attr(reducedDim(se, "MDS"), "eig")
-
-# Calculate % variance (Eigenvalue / Sum of all Eigenvalues)
-if (!is.null(eig)) {
-  percent_var <- (eig / sum(eig)) * 100
-  xlbl <- paste0(" Component 1 (", round(percent_var[1], 1), "%)")
-  ylbl <- paste0("Component 2 (", round(percent_var[2], 1), "%)")
-} else {
-  # Fallback if no variance is found
-  xlbl <- "MDS1"
-  ylbl <- "MDS2"
-}
-
-
-mds_plot <- scater::plotMDS(se, colour_by = "Condition") +
-  # We re-apply geom_point to control alpha and the custom hover text
-  # Using \n creates a new line in the plotly tooltip
-  geom_point(aes(color = colData(se)$Condition, 
-    text = paste0(
-      "Sample: ", colData(se)$CondRep, "<br>",
-      "Condition: ", colData(se)$Condition, "<br>",
-      "Replicate: ", colData(se)$Replicate
-    )
-  ), alpha = 0.8, size = 3) + 
-  labs(x = xlbl, y = ylbl) +
-  theme_bw()
-
-ggplotly(mds_plot, tooltip = "text")
+#ggplotly(mds_plot, tooltip = "text")
 # mds_coords <- reducedDim(se, "MDS")
 # mdata <- as.data.frame(colData(se))
 
@@ -412,8 +392,8 @@ for (a in   params$comparison_label ){
 
 log_info({ names(res_DE)})
 
-log_info('Saving pe object (qfeatures) as Rds file.')
-saveRDS(pe, file = file.path( params$folder_prj, "Result","qfeat_experiment.Rds"))  
+#log_info('Saving pe object (qfeatures) as Rds file.')
+#saveRDS(pe, file = file.path( params$folder_prj, #"Result","qfeat_experiment.Rds"))  
 ```
 
 

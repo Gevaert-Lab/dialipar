@@ -4,7 +4,13 @@
 \alias{make_barplot}
 \title{make_barplot}
 \usage{
-make_barplot(df, POI_, colour_mapping_significance, colour_mapping_type)
+make_barplot(
+  df,
+  POI_,
+  colour_mapping_significance,
+  colour_mapping_type,
+  expand
+)
 }
 \arguments{
 \item{df}{Data frame prepared for plotting (must contain start, end, tier, max_tier, length, coverage, significance, type)}
