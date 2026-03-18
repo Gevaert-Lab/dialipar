@@ -162,9 +162,8 @@ render_quarto_template <- function(data_list, template_name, report_fld, report_
 process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
   fastaproc <- read_fasta_ann(params_report$fasta_file )
       input_data <- parse_input(params_report$input_file_tc, 
-                          params_report$input_file_lip,  
-                          dual = FALSE, 
-                          params_report$design_file)
+                                params_report$input_file_lip,   
+                                params_report$design_file)
 
         qf_base <- create_qfeat_(input_data$design, input_data$lip, input_data$tc, input_data$diann_flag)
         if (qf_base$status == 1) stop(qf_base$error)
@@ -290,7 +289,6 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
       res_layer <-  rowData(data[[layer]])[[label]]
       res_layer_df <- as.data.frame(res_layer, check.names = FALSE) %>% 
       rownames_to_column(var = "Precursor.Id") 
-      #browser()
       #res_layer_df <- res_layer_df[, !sapply(res_layer_df, is.list)]
 # --- 2. Process Assay B (Optional, e.g., Protein/Norm) ---
   if (!is.null(layer_)) {
@@ -303,7 +301,6 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
       res_layer__df <-  res_layer__df %>% 
       rownames_to_column(var = "Precursor.Id") %>% 
       rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -Precursor.Id)
-      #browser()
     # Merge A and B
     res_combined <- full_join(res_layer_df, res_layer__df, by = "Precursor.Id")  
   }else {
@@ -384,9 +381,7 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
       title = paste0("Volcano ", 'TEST' ),
       to_save= FALSE
     )
-      #browser()
       res_usage_plt <- clean_plotly(res_usage$volcano)
-     #browser()
      
      #res_usage_grob <- as_lean_grob(res_usage$volcano)
     
@@ -622,9 +617,19 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, dian
 
     # 1. Initial Import and subsetting
     # Filter using .data to avoid global variable warnings
-    input_data <- report_file1 %>%
+    if (! is.null(report_file2) ){
+        input_lip <- report_file1 %>%
       dplyr::filter(.data$Precursor.Quantity > 4)
+        input_tc <- report_file2 %>%
+      dplyr::filter(.data$Precursor.Quantity > 4)
+      input_data <- bind_rows(input_lip, input_tc)
 
+
+    }else{input_data <- report_file1 %>%
+      dplyr::filter(.data$Precursor.Quantity > 4)
+      }
+    
+    
     qf <- QFeatures::readQFeatures(
       assayData = input_data,
       colData = annotation_df,
@@ -632,7 +637,6 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, dian
       runCol = "Run",
       fnames = "Precursor.Id"
     )
-
     # 2. Add Proteotypic info
     for (i in seq_along(qf)) {
       rd <- SummarizedExperiment::rowData(qf[[i]])
@@ -643,17 +647,17 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, dian
     log_info('Filtering Qvalue/PG.Qvalue < 0.01 ...')
 
     # filterFeatures uses a formula interface; it handles its own variable scope
-    if (diann_flag ){
+     if (diann_flag ){
     qf <- QFeatures::filterFeatures(qf, ~ Q.Value <= 0.01 & 
                                       PG.Q.Value <= 0.01 & 
                                       Lib.Q.Value <= 0.01 & 
                                       Precursor.Id != "" & 
                                       Decoy == 0)
-    }else {
-    qf <- QFeatures::filterFeatures(qf, ~ Q.Value <= 0.01 & 
-                                      PG.Q.Value <= 0.01 & 
-                                      Precursor.Id != "" )
-    }
+     }else {
+     qf <- QFeatures::filterFeatures(qf, ~ Q.Value <= 0.01 & 
+                                       PG.Q.Value <= 0.01 & 
+                                       Precursor.Id != "" )
+     }
 
     # 3. Join assays based on Pipeline metadata
     lip_samples <- which(SummarizedExperiment::colData(qf)$Pipeline == "LiP")
@@ -1082,7 +1086,6 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
 #' @description Read and parse input parquet file(s) and the experiment design file. Detects whether reports are in DIA‑NN format, reads TC and/or LiP reports (from one or two parquet files depending on 'dual'), validates the design using check_design_requirement, and returns parsed reports along with the design and a diann_flag.
 #' @param input_parquet_tc Path to the TC parquet file (used when dual = TRUE)
 #' @param input_parquet_lip Path to the LiP parquet file (or the single combined parquet when dual = FALSE)
-#' @param dual Logical; TRUE if TC and LiP are in separate parquet files, FALSE if both are in one file
 #' @param input_design Path to the experiment design file (tsv/arrow readable)
 #' @return A list with elements:
 #'   \item{status}{integer; 0 if successful, 1 if an error occurred}
@@ -1095,22 +1098,20 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
 #' @importFrom dplyr rename
 #' @importFrom rlang .data
 #' @importFrom logger log_info
-parse_input <- function(input_parquet_tc, input_parquet_lip, dual, input_design) {
+parse_input <- function(input_parquet_tc, input_parquet_lip , input_design) {
   
   # Internal helper to check for DIA-NN format
   is_diann <- function(df) {
     "Run" %in% colnames(df)
   }
-  
   tryCatch(
     expr = {
       # 1. Loading Reports
-      if (isTRUE(dual)) {
+      if ( ! is.null(input_parquet_tc)) {
         log_info('Reading Tc and Lip from SEPARATE parquet files ...')
         TC_report <- arrow::read_parquet(input_parquet_tc)
         LiP_report <- arrow::read_parquet(input_parquet_lip)
-        # Note: 'stop' will be caught by the error block below
-        stop('Dual mode logic is currently being fixed.') 
+  
       } else {
         log_info('Reading both LiP and TC from ONE parquet file ...')
         LiP_report <- arrow::read_parquet(input_parquet_lip)
@@ -1128,12 +1129,27 @@ parse_input <- function(input_parquet_tc, input_parquet_lip, dual, input_design)
                   PG.Q.Value = PG_Qvalue,
                   Precursor.Id = PEP_GroupingKey,
                   Stripped.Sequence = PEP_StrippedSequence,
-                  #Decoy = EG_IsDecoy,
+                  Decoy = EG_IsDecoy,
                   Precursor.Charge = FG_Charge,
                   Q.Value = FG_Qvalue,
                   Precursor.Quantity = FG_MS2RawQuantity
                 )
-              }
+        if  ( ! is.null(input_parquet_tc)) {
+          TC_report <- TC_report %>%
+              rename(
+                Run = R_FileName,   # nieuwe naam = oude naam
+                Genes = PG_Genes,
+                Protein.Group = PG_ProteinGroups,
+                Protein.Names = PG_ProteinNames,
+                PG.Q.Value = PG_Qvalue,
+                Precursor.Id = PEP_GroupingKey,
+                Stripped.Sequence = PEP_StrippedSequence,
+                Decoy = EG_IsDecoy,
+                Precursor.Charge = FG_Charge,
+                Q.Value = FG_Qvalue,
+                Precursor.Quantity = FG_MS2RawQuantity)
+        }     
+     }
 
       # 2. Loading and Validating Design
       log_info('Reading experiment Design file ...')

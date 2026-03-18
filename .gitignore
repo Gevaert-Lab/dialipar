@@ -50,3 +50,7 @@ rsconnect/
 inst/doc
 /doc/
 /Meta/
+
+test_.rds
+
+vol_obj.rds
