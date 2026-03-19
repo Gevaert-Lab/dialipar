@@ -37,6 +37,7 @@ params:
  adjPval_thr: ""
  poi: ""
  data_path: ""
+ paired: FALSE
 ---
 
 ```{r input}

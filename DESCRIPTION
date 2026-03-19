@@ -45,6 +45,7 @@ Imports:
   assertthat,
   magrittr,
   plotly,
+  lobstr,
   yaml
 Suggests: 
     rmarkdown,

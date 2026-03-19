@@ -182,7 +182,6 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
         if (qc_ann$status == 1) stop(qc_ann$error)
         #debug 
         #saveRDS(qc_ann$result, './TEST_exp.Rds')
-        #stop('Debug')
         ## qc_ann$result go to data bag.
         if (analysis_type == 'paired') {
               log_info('Paired branch ...')
@@ -298,9 +297,8 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
       res_layer__df <- as.data.frame(res_layer_, check.names = FALSE) 
     
       #res_layer__df <- res_layer__df[, !sapply(res_layer__df, is.list)] # Drop models
-      res_layer__df <-  res_layer__df %>% 
-      rownames_to_column(var = "Precursor.Id") %>% 
-      rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -Precursor.Id)
+      res_layer__df <-  res_layer__df %>%   rownames_to_column(var = "Precursor.Id") %>% 
+                                      rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -Precursor.Id)
     # Merge A and B
     res_combined <- full_join(res_layer_df, res_layer__df, by = "Precursor.Id")  
   }else {
@@ -1099,15 +1097,15 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
 #' @importFrom rlang .data
 #' @importFrom logger log_info
 parse_input <- function(input_parquet_tc, input_parquet_lip , input_design) {
-  
   # Internal helper to check for DIA-NN format
+  
   is_diann <- function(df) {
     "Run" %in% colnames(df)
   }
   tryCatch(
     expr = {
       # 1. Loading Reports
-      if ( ! is.null(input_parquet_tc)) {
+      if ( ! ( is.null( input_parquet_tc) || input_parquet_tc == "") ) {
         log_info('Reading Tc and Lip from SEPARATE parquet files ...')
         TC_report <- arrow::read_parquet(input_parquet_tc)
         LiP_report <- arrow::read_parquet(input_parquet_lip)
@@ -1134,7 +1132,7 @@ parse_input <- function(input_parquet_tc, input_parquet_lip , input_design) {
                   Q.Value = FG_Qvalue,
                   Precursor.Quantity = FG_MS2RawQuantity
                 )
-        if  ( ! is.null(input_parquet_tc)) {
+        if  ( ! ( is.null( input_parquet_tc) || input_parquet_tc == "") ) {
           TC_report <- TC_report %>%
               rename(
                 Run = R_FileName,   # nieuwe naam = oude naam
@@ -1187,110 +1185,6 @@ parse_input <- function(input_parquet_tc, input_parquet_lip , input_design) {
 }
 
 
-#' @author Andrea Argentini
-#' @title annotate_spectronaut
-#' @description Annotate and standardize Spectronaut reports: bind reports, rename/standardize columns,
-#' join sample annotations, filter and keep precursors found in at least two samples per condition,
-#' compute peptide-level metrics (missed cleavages, proteotypic), expand protein accessions,
-#' join FASTA-derived sequence information, compute peptide start/end positions and flanking amino acids,
-#' and classify peptides as Tryptic / SemiTryptic / NonTryptic. Returns an annotated data.frame inside a result list.
-#' @param annotation_df Data frame with sample annotation (must contain "Run" for joining)
-#' @param report_file1 Data frame or tibble with Spectronaut report data
-#' @param report_file2 Optional second Spectronaut report data frame or tibble (default NULL)
-#' @param fasta_ann Data frame with FASTA-derived annotations (must contain "Accession" and "Protein.Sequence")
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if no error, 1 if an error was found}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{result}{data.frame; annotated Spectronaut data (NULL if an error occurred)}
-#' @importFrom arrow read_parquet read_tsv_arrow
-#' @importFrom tidyr separate_rows
-#' @importFrom dplyr rename select bind_rows left_join group_by mutate ungroup filter slice n
-#' @importFrom stringr str_split str_count str_locate_all str_sub str_trim str_detect
-#' @importFrom magrittr %>%
-
-#' @importFrom logger log_info
-annotate_spectronaut <- function (annotation_df, report_file1, report_file2 = NULL,fasta_ann){
-
-  tryCatch( expr = {
-    log_info('Annotation spectronaut standardize column name ...')
-
-    app <- bind_rows(report_file1, report_file2) %>%
-          dplyr::rename(  "Run" = "R_FileName" ,
-                 "Precursor.Id" = "PEP_GroupingKey" ,
-                  "Modified.Sequence" = "FG_LabeledSequence" ,
-                  "Stripped.Sequence" = "PEP_StrippedSequence" ,
-                 "Precursor.Charge" = "FG_Charge" ,
-                 "Protein.Group" = "PG_ProteinGroups",
-                 "Genes" =  "PG_Genes",
-                 "Protein.Names" = "PG_ProteinNames",
-                 "Precursor.Quantity"= "FG_MS2RawQuantity"  ,
-                  "Ms1.Area" = "FG_MS1RawQuantity",
-                  "Lib.Q.Value" = "FG_Qvalue" ) %>%
-        select(Run,
-              Precursor.Id,
-              Modified.Sequence,
-              Stripped.Sequence,
-              Precursor.Charge,
-              Protein.Group,
-              Protein.Names,
-              Genes,
-              Precursor.Quantity,
-              Ms1.Area,
-              # Q.Value, #If no MBR is done, all precursors pass the threshold in set in DIA-NN, there's no need to filter further
-              Lib.Q.Value) %>%
-  left_join(annotation_df, by = "Run")
-app_a <- app %>%  filter(Precursor.Quantity> 4,
-         Lib.Q.Value <= 0.01) %>% #MBR was used, so filter on Lib.Q.Value
-  group_by(Precursor.Id, Condition) %>%
-  filter(n() >= 2)   #Keep only precursors which were found in at least 2 samples per condition
-
-# emin original code
-#app_b <- app_a %>% mutate(missed_cleavages = (Stripped.Sequence %>% str_count("[RK](?!(P|$))"))) %>%
-#          group_by(Run, Precursor.Id) %>%
-#          mutate(Proteotypic = ifelse(str_detect(Protein.Group, ";"), 0, 1)) %>%
-#          slice(rep(1, str_count(Protein.Group, ";")+1)) %>%
-#          mutate(Accession = unlist(str_split(Protein.Group[1], ";"))) %>%
-#          ungroup()
-
-app_b <- app_a %>%
-  mutate(
-    missed_cleavages = str_count(Stripped.Sequence, "[RK](?!(P|$))"),
-    Proteotypic     = ifelse(str_detect(Protein.Group, ";"), 0, 1),
-    Accession       = Protein.Group         # create column to split so original stays
-  ) %>%
-  separate_rows(Accession, sep = ";") %>%
-  mutate(Accession = str_trim(Accession)) %>%  # trim spaces if any
-  ungroup()
-  ## splited in two parts
-  log_info('Annotation spectronaut adding fasta info ...')
-  
-  app_c <- app_b %>%  left_join(fasta_ann, by = "Accession") %>%   # option if fasta file is used
-  mutate(total_repeats = str_count(Protein.Sequence, Stripped.Sequence)) %>%
-  group_by(Run, Stripped.Sequence, Accession) %>%
-  dplyr::slice(rep(1, total_repeats[1])) %>%
-  mutate(repeat_nr = 1:max(total_repeats)) %>%
-  group_by(Stripped.Sequence, Accession) %>%
-  mutate(start = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 1],
-         end = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 2],
-         AA_before = str_sub(Protein.Sequence[1], start-1, start-1),
-         AA_last = str_sub(Stripped.Sequence[1], -1, -1),
-         AA_after = str_sub(Protein.Sequence[1], end+1, end+1),
-         pep_type = ifelse(AA_before %in% c("K", "R") & (AA_last %in% c("K", "R")) | #internal tryptic peptides
-                          (AA_before %in% c("K", "R") & AA_after == "") | #C-terminal tryptic peptides
-                          ((AA_before == "" | (AA_before == "M" & start==2)) & AA_last %in% c("K", "R")), #N-terminal tryptic peptides
-                           "Tryptic",
-                          ifelse(AA_before %in% c("K", "R") | (AA_last %in% c("K", "R")),
-                                 "SemiTryptic",
-                                 "NonTryptic"))) %>% ungroup()
-
-  return( list(error= '', status= 0, result =app_c ))
-  },error = function(err){
-    print(paste("Annotation on Spectrounaut :  ",err))
-    return( list(error= err, status= 1,result =NULL ))
-  } )
-
-}
-
 
 
 #' @author Andrea Argentini
@@ -1308,7 +1202,6 @@ app_b <- app_a %>%
 #' @importFrom dplyr distinct left_join join_by group_by summarise
 #' @importFrom IRanges IRanges reduce width
 #' @importFrom logger log_info
-
 
 
 calculate_coverages <- function(report) {

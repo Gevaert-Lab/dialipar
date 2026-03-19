@@ -186,8 +186,9 @@ validate_params_minimal <- function(params) {
     ),
      poi = list(
       type = "character"
-    )
-
+    ), 
+    paired = list(
+      type = 'logical')
 
   )
 
@@ -317,8 +318,8 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info ('DIA-LiPA start  ...')
 
   ## Drafting the  flow
-
-  data_ <- process_dialipa_data(params_report = params_report)
+  type_analysis <- if (params_report$paired) "paired" else "unpaired"
+  data_ <- process_dialipa_data(params_report = params_report, analysis_type = type_analysis )
   
   log_info(' DATA bag   ')
   log_info(sprintf("Size all  : %.2f MB", as.numeric(obj_size(data_$result)) / 1024^2))
