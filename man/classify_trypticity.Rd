@@ -2,36 +2,24 @@
 % Please edit documentation in R/utils_function.R
 \name{classify_trypticity}
 \alias{classify_trypticity}
-\title{classify_trypticity
-Categorizes peptides as Tryptic, Semi-Tryptic, or Non-Tryptic based on the 
-presence of Lysine (K) or Arginine (R) at the cleavage sites, while 
-accounting for protein termini and N-terminal Methionine excision.}
+\title{Classify Peptide Trypticity}
 \usage{
 classify_trypticity(peptide, protein, start_pos)
 }
 \arguments{
-\item{peptide}{A character vector of peptide sequences.}
+\item{peptide}{Character vector of peptide sequences.}
 
-\item{protein}{A character vector of the parent protein sequences.}
+\item{protein}{Character vector of the parent protein sequences.}
 
-\item{start_pos}{A numeric vector indicating the starting position of the 
-peptide within the protein (1-based indexing).}
+\item{start_pos}{Numeric vector of the 1-based start position.}
 }
 \value{
-A character vector of the same length as `peptide` containing 
-"Tryptic", "Semi-Tryptic", "Non-Tryptic", or "Ambiguous".
+A character vector: "Tryptic", "Semi-Tryptic", "Non-Tryptic", or "Ambiguous".
+
+#' @importFrom rlang .data
 }
 \description{
-Classify Peptide Trypticity
-}
-\details{
-The classification rules are:
-\itemize{
-  \item \strong{Tryptic}: Both ends follow tryptic rules (preceded by K/R or at N-term; ends in K/R or at C-term).
-  \item \strong{Semi-Tryptic}: Only one end follows tryptic rules.
-  \item \strong{Non-Tryptic}: Neither end follows tryptic rules.
-}
-Special case: If a peptide starts at position 2 and the first amino acid 
-of the protein is Methionine (M), the N-terminus is considered tryptic 
-due to common N-terminal Methionine excision.
+Categorizes peptides as Tryptic, Semi-Tryptic, or Non-Tryptic based on 
+Protease (Trypsin) cleavage rules, accounting for protein termini 
+and N-terminal Methionine excision.
 }

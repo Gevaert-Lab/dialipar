@@ -24,10 +24,14 @@ make_volcano_plot(
 
 \item{to_save}{Logical; if FALSE prepare interactive-style tooltip text (for saving as interactive plot), if TRUE produce a static plot with labeled significant points}
 
-\item{poi_vis}{Character or numeric vector; points-of-interest used to determine colour palette length (e.g. vector of proteins/genes of interest)}
+\item{usage}{Logical; if TRUE, uses "usage_" prefixed columns (default TRUE)}
 }
 \value{
-A ggplot object representing the volcano plot (interactive tooltip text is placed in a column named `tooltip_text` when to_save is FALSE)
+A list containing:
+\itemize{
+  \item \code{volcano}: A ggplot object representing the volcano plot.
+  \item \code{POI_l}: A character vector of the top 10 significant Protein Groups.
+}
 }
 \description{
 Generates a volcano plot from differential expression results using ggplot2.

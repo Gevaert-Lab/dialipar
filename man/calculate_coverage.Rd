@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_function.R
 \name{calculate_coverage}
 \alias{calculate_coverage}
-\title{calculate_coverage}
+\title{Calculate Protein Sequence Coverage}
 \usage{
 calculate_coverage(start, end, protein_length)
 }
@@ -20,11 +20,10 @@ sequence covered. Returns `NA` if `protein_length` is `NA` or if no valid
 start/end pairs are provided.
 }
 \description{
-Calculate Protein Sequence Coverage
+Calculates the fraction of a protein sequence covered by a set 
+of peptides or fragments. It accounts for overlapping regions by treating 
+the segments as range-based intervals.
 }
 \author{
 Andrea Argentini
-This function calculates the fraction of a protein sequence covered by a set 
-of peptides or fragments. It accounts for overlapping regions by treating 
-the segments as genomic-style ranges.
 }

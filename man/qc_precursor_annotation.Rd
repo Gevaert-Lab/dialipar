@@ -7,16 +7,16 @@
 qc_precursor_annotation(q_feat, mapping, type)
 }
 \arguments{
-\item{q_feat}{A \code{QFeatures} object containing "precursors_lip_norm", 
-"precursors_tc_norm", and "precursors_lip_usage" assays.}
+\item{q_feat}{A \code{QFeatures} object.}
 
-\item{mapping}{A data frame used for joining protein accessions to metadata. 
-Must contain an \code{Accession} column.}
+\item{mapping}{A data frame used for joining protein accessions to metadata.}
+
+\item{type}{Character. Either "paired" or "unpaired".}
 }
 \value{
 A list with the following components:
 \itemize{
-  \item \code{error}: Character string containing error messages, if any.
+  \item \code{error}: Character string containing error messages.
   \item \code{status}: Integer (0 for success, 1 for error).
   \item \code{result}: An annotated data frame in long format.
 }
@@ -24,9 +24,5 @@ A list with the following components:
 \description{
 Converts QFeatures assays into a long-format data frame and performs 
 comprehensive annotation including protein mapping, peptide characterization, 
-and condition formatting. This prepared data is typically used for QC 
-plots like MDS or intensity distributions.
-}
-\details{
-Annotate Precursors for QC Visualization
+and condition formatting.
 }

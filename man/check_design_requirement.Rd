@@ -2,25 +2,29 @@
 % Please edit documentation in R/utils_function.R
 \name{check_design_requirement}
 \alias{check_design_requirement}
-\title{check_design_requirement}
+\title{Check Design File Requirements}
 \usage{
 check_design_requirement(df, required_cols)
 }
 \arguments{
-\item{df}{Input data frame where features need to be checked}
+\item{df}{A \code{data.frame} containing the experimental design.}
 
-\item{required_cols}{Character vector of required column names}
+\item{required_cols}{A \code{character} vector of column names that must exist in \code{df}.}
 }
 \value{
-A list with elements:
-  \item{status}{integer; 0 if no error, 1 if an error was found}
-  \item{error}{character; error message when status is 1, otherwise an empty string}
+A \code{list} with two elements:
+\itemize{
+  \item \code{status}: Integer; 0 for success, 1 if a validation error was found.
+  \item \code{error}: Character; a descriptive error message if \code{status} is 1.
+}
 }
 \description{
-This function performs the following checks on the design file:
- 1) Check required columns exist
- 2) Check Run column has no file extensions
- 3) Check Pipeline column values
+Performs critical validation checks on the experimental design data frame:
+\enumerate{
+  \item Verifies all required columns are present.
+  \item Ensures the 'Run' column does not contain file extensions (e.g., .raw, .mzML).
+  \item Validates that the 'Pipeline' column only contains "LiP" or "TC".
+}
 }
 \author{
 Andrea Argentini

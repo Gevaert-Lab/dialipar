@@ -2,25 +2,26 @@
 % Please edit documentation in R/utils_function.R
 \name{calculate_coverages}
 \alias{calculate_coverages}
-\title{calculate_coverages}
+\title{Calculate Sequence Coverage per Protein}
 \usage{
 calculate_coverages(report)
 }
 \arguments{
-\item{report}{Data frame or tibble containing at minimum the columns:
-"Accession", "length" (protein length), "start" and "end" (peptide coordinates)}
+\item{report}{A \code{data.frame} or \code{tibble} containing "Accession", 
+"length", "start", and "end".}
 }
 \value{
-A list with elements:
-  \item{status}{integer; 0 if successful, 1 if an error occurred}
-  \item{error}{character; error message when status is 1, otherwise an empty string}
-  \item{result}{data.frame; original report augmented with a numeric column "coverage" (per-accession coverage)}
+A list with the following components:
+\itemize{
+  \item \code{status}: Integer (0 for success, 1 for error).
+  \item \code{error}: Character string containing error messages.
+  \item \code{result}: The original data frame with an added "coverage" column.
+}
 }
 \description{
-Calculate sequence coverage per protein accession across the dataset.
-For each accession the function reduces peptide ranges (start/end) and computes the
-fraction of covered amino-acid positions relative to the reported protein length, then
-joins the coverage value back to the original report.
+Calculates the fraction of each protein sequence covered by the detected 
+peptides. Overlapping peptide regions are reduced to unique amino acid 
+positions to ensure accurate coverage mapping.
 }
 \author{
 Andrea Argentini

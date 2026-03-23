@@ -4,7 +4,7 @@
 \alias{create_qfeat_}
 \title{create_qfeat_}
 \usage{
-create_qfeat_(annotation_df, report_file1, report_file2 = NULL)
+create_qfeat_(annotation_df, report_file1, report_file2 = NULL, diann_flag)
 }
 \arguments{
 \item{annotation_df}{A data frame containing sample metadata (colData).}
@@ -12,6 +12,8 @@ create_qfeat_(annotation_df, report_file1, report_file2 = NULL)
 \item{report_file1}{A data frame containing quantitative proteomics data.}
 
 \item{report_file2}{Optional; secondary report file (default is NULL).}
+
+\item{diann_flag}{Logical; TRUE if data is from DIA-NN, FALSE for Spectronaut.}
 }
 \value{
 A list with status, error message, and the resulting QFeatures object.
@@ -19,7 +21,4 @@ A list with status, error message, and the resulting QFeatures object.
 \description{
 Converts raw data frames into a QFeatures object, calculates group-specific 
 detection heuristics, and performs initial quality filtering.
-}
-\details{
-Create QFeatures Object from Proteomics Reports
 }

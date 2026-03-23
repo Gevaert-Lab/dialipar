@@ -7,32 +7,26 @@
 build_df_result(label, data, layer, layer_ = NULL, df_anno, mapping_df, params)
 }
 \arguments{
-\item{label}{\code{character(1)}. The name of the contrast to extract (e.g., "TreatmentA - TreatmentB").}
+\item{label}{Character. The name of the contrast (e.g., "TreatmentA - TreatmentB").}
 
-\item{data}{A \code{QFeatures} object containing the statistical results in its \code{rowData}.}
+\item{data}{A QFeatures object.}
 
-\item{layer}{\code{character(1)}. The name of the main assay (usually the normalized LiP assay) 
-containing the protein-level or peptide-level fold changes.}
+\item{layer}{Character. Main assay name (normalized LiP).}
 
-\item{layer_}{\code{character(1)} or \code{NULL}. The name of the secondary assay (usually the 
-Usage assay). 
-\itemize{
-  \item If provided (Paired analysis), results are fetched from this layer and joined.
-  \item If \code{NULL} (Unpaired analysis), the function looks for usage statistics 
-        (e.g., \code{pval_usage}) inside \code{layer} and renames them to match 
-        the standard format (\code{usage_pval}).
-}}
+\item{layer_}{Character or NULL. Secondary assay name (Usage).}
 
-\item{df_anno}{\code{data.frame}. A data frame containing annotation metadata. Must contain 
-a column named \code{"Precursor.Id"} for joining.}
+\item{df_anno}{data.frame. Precursor metadata for joining.}
+
+\item{mapping_df}{data.frame. FASTA/Protein mapping metadata.}
+
+\item{params}{list. Analysis parameters.}
 }
 \value{
-A \code{list} containing a single element \code{df}, which is the combined 
-  data frame of statistics and annotations for the requested contrast.
+A list containing the results table and serialized/lean plot objects.
 }
 \description{
 Internal helper function to extract, format, and standardize differential expression 
-results for a specific contrast. It handles both "paired" (usage in a separate assay) 
-and "unpaired" (usage calculated within the same assay) workflows by unifying column names.
+results for a specific contrast. It handles both "paired" and "unpaired" 
+workflows by unifying column names and generating associated plots.
 }
 \keyword{internal}

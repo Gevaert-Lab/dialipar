@@ -21,16 +21,4 @@ A list with the following components:
 Performs log2 transformation on LiP and TC assays, calculates sample-based 
 normalization factors using common features, and aggregates TC precursors 
 to the protein level.
-
-The normalization scaling factor is calculated by:
-\enumerate{
-  \item Extracting the assay data.
-  \item Removing features with missing values.
-  \item Calculating column-wise medians to obtain log2 scale normalization factors.
-  \item Zero-centering the normalization factors.
-  \item Subtracting factors from intensities using \code{QFeatures::sweep}.
-}
-}
-\details{
-Normalize and Aggregate Proteomics Data
 }

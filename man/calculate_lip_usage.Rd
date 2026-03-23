@@ -34,7 +34,7 @@ identifying proteins. Default is "Protein.Group".}
 approximation for degrees of freedom. Default is \code{FALSE}.}
 }
 \value{
-A \code{QFeatures} object with updated \code{rowData} in the \code{i_lip} assay.
+A \code{list} with \code{status}, \code{error}, and the updated \code{QFeatures} object.
 }
 \description{
 This function corrects LiP peptide log-fold changes (logFC) by subtracting the 

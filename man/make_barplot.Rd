@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_function.R
 \name{make_barplot}
 \alias{make_barplot}
-\title{make_barplot}
+\title{Create Peptide Barcode Plot}
 \usage{
 make_barplot(
   df,
@@ -13,19 +13,23 @@ make_barplot(
 )
 }
 \arguments{
-\item{df}{Data frame prepared for plotting (must contain start, end, tier, max_tier, length, coverage, significance, type)}
+\item{df}{Data frame prepared for plotting (must contain start, end, tier, max_tier, length, Genes, significance, type).}
 
-\item{POI_}{Character; protein accession or identifier used in the plot title}
+\item{POI_}{Character; protein accession or identifier used in the plot title.}
 
-\item{colour_mapping_significance}{Named character vector mapping significance categories to fill colours}
+\item{colour_mapping_significance}{Named character vector mapping significance categories to fill colors.}
 
-\item{colour_mapping_type}{Named character vector mapping peptide type categories to outline colours}
+\item{colour_mapping_type}{Named character vector mapping peptide type categories to outline colors.}
+
+\item{expand}{Logical. If TRUE, facets the plot by \code{pep_type} and \code{section}.}
 }
 \value{
-A ggplot object representing the barcode plot
+A \code{ggplot} object.
 }
 \description{
-ggplot2 code for the barcode plot. Draws peptide rectangles along protein sequence coordinates, colours by significance and proteotypicity, and returns a ggplot object ready for display or saving.
+Generates a barcode-style plot using ggplot2. Draws peptide rectangles along 
+protein sequence coordinates, colors by significance and proteotypicity, 
+and handles faceting by peptide type and section.
 }
 \author{
 Andrea Argentini

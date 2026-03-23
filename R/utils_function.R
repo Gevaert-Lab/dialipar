@@ -1,56 +1,71 @@
 
+#' @title Create MDS Plot Grob
+#' @description 
+#' Performs Multi-Dimensional Scaling (MDS) on joined assays within a QFeatures 
+#' object, calculates variance explained, and returns a rendered ggplot grob.
+#' 
+#' @param pe A \code{QFeatures} object containing \code{precursors_lip_norm} 
+#' and \code{precursors_tc_norm} assays.
+#' 
+#' @return A \code{gtable} (grob) object representing the MDS plot.
+#' 
+#' @importFrom QFeatures joinAssays
+#' @importFrom MultiAssayExperiment getWithColData
+#' @importFrom scater runMDS plotMDS
+#' @importFrom SingleCellExperiment reducedDim
+#' @importFrom ggplot2 ggplot aes geom_point labs theme_bw ggplotGrob
+#' @importFrom methods as
+#' @importFrom rlang .data
 
+make_mds <- function(pe) {
+  # 1. Join assays and extract as SummarizedExperiment
+  se <- QFeatures::joinAssays(pe, i = c("precursors_lip_norm", "precursors_tc_norm"), fcol = "Precursor.Id") |> 
+    MultiAssayExperiment::getWithColData("joinedAssay")
 
-make_mds <- function(pe){
+  # 2. Convert to SingleCellExperiment (required by scater) and run MDS
+  sce <- as(se, "SingleCellExperiment")
+  sce <- scater::runMDS(sce, exprs_values = 1)
 
+  # 3. Extract Eigenvalues for axis labels
+  eig <- attr(SingleCellExperiment::reducedDim(sce, "MDS"), "eig")
 
-  se <- joinAssays(pe,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") |>  getWithColData("joinedAssay")
+  if (!is.null(eig)) {
+    percent_var <- (eig / sum(eig)) * 100
+    xlbl <- paste0("Component 1 (", round(percent_var[1], 1), "%)")
+    ylbl <- paste0("Component 2 (", round(percent_var[2], 1), "%)")
+  } else {
+    xlbl <- "MDS1"
+    ylbl <- "MDS2"
+  }
 
-se <- scater::runMDS(as(se, "SingleCellExperiment"), exprs_values =1)
-
-eig <- attr(reducedDim(se, "MDS"), "eig")
-
-# Calculate % variance (Eigenvalue / Sum of all Eigenvalues)
-if (!is.null(eig)) {
-  percent_var <- (eig / sum(eig)) * 100
-  xlbl <- paste0(" Component 1 (", round(percent_var[1], 1), "%)")
-  ylbl <- paste0("Component 2 (", round(percent_var[2], 1), "%)")
-} else {
-  # Fallback if no variance is found
-  xlbl <- "MDS1"
-  ylbl <- "MDS2"
-}
-
-
- as_lean_grob <- function(p) {
+  # 4. Internal Helper to strip data environments
+  as_lean_grob <- function(p) {
     if (is.null(p)) return(NULL)
-    
-    # 1. Convert ggplot to a gtable/grob (this 'renders' the data into coordinates)
-    g <- ggplotGrob(p)
-    
-    # 2. This object is now just 'points and lines'—the 160MB dataframe is GONE.
-    return(g)
-  }  
+    return(ggplot2::ggplotGrob(p))
+  }
+
+  # 5. Create Plot
+  # Note: scater::plotMDS creates the base ggplot
+
+  mds_plot <- scater::plotMDS(sce, colour_by = "Condition")
   
-mds_plot <- scater::plotMDS(se, colour_by = "Condition") +
-  # We re-apply geom_point to control alpha and the custom hover text
-  # Using \n creates a new line in the plotly tooltip
-  geom_point(aes(color = colData(se)$Condition, 
+# 2. Add the 'text' aesthetic to the existing mapping for plotly
+  # This avoids adding a 2nd layer and keeps the scater internal data
+  mds_plot$layers[[1]]$mapping <- ggplot2::aes(
+    color = colData(se)$Condition,
     text = paste0(
       "Sample: ", colData(se)$CondRep, "<br>",
       "Condition: ", colData(se)$Condition, "<br>",
       "Replicate: ", colData(se)$Replicate
     )
-  ), alpha = 0.8, size = 3) + 
-  labs(x = xlbl, y = ylbl) +
-  theme_bw()
-  
-    
-  
-  return(as_lean_grob(mds_plot) )
-  
-}
+  )
 
+  mds_plot <- mds_plot + 
+    ggplot2::labs(x = xlbl, y = ylbl) +
+    ggplot2::theme_bw()
+
+  return(as_lean_grob(mds_plot))
+}
 
 
 
@@ -83,6 +98,10 @@ mds_plot <- scater::plotMDS(se, colour_by = "Condition") +
 #' @importFrom logger log_info log_error
 #' @importFrom withr with_dir
 #' @importFrom tools file_path_sans_ext
+#' @importFrom utils object.size
+#' @importFrom rlang .data
+#' @importFrom lobstr obj_size
+
 render_quarto_template <- function(data_list, template_name, report_fld, report_fname, params_report) {
   # 1. Setup Temp Dir (Your current logic is good here)
   template_source_folder <- system.file("quarto_template", package = "dialipar")
@@ -158,6 +177,28 @@ render_quarto_template <- function(data_list, template_name, report_fld, report_
   
 }
 
+#' @title process_dialipa_data
+#' 
+#' @description
+#' Main processing pipeline for DIA-LiPA data. Orchestrates input parsing, 
+#' normalization, precursor annotation, and differential expression modeling 
+#' for both paired and unpaired experimental designs.
+#'
+#' @param params_report A list containing report parameters including file paths, 
+#' comparisons, and thresholds.
+#' @param analysis_type Character string. Either "unpaired" (default) or "paired".
+#'
+#' @return A list with three elements: `error` (string), `status` (integer, 0 for success), 
+#' and `result` (a list containing QC data, MDS plots, and DE results).
+#' 
+#' @export
+#' 
+#' @importFrom logger log_info
+#' @importFrom rlang .data
+#' @importFrom utils object.size
+#' @importFrom SummarizedExperiment rowData assays
+#' @importFrom S4Vectors colnames
+#' @importFrom lobstr obj_size
 
 process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
   fastaproc <- read_fasta_ann(params_report$fasta_file )
@@ -189,7 +230,7 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
               if (res_de_norm$status == 1) stop(res_de_norm$error)
               res_de_usage <-  msqrob_model(pe = res_de_norm$q_feat, params = params_report, layer = 'precursors_lip_usage' )
               if (res_de_usage$status == 1) stop(res_de_usage$error)
-              df_ann <-  as.data.frame(rowData(res_de_usage$q_feat[["precursors_lip_norm"]])[c("Precursor.Id", "Protein.Group", "Genes", "Proteotypic", "Stripped.Sequence")])
+              df_ann <-  as.data.frame(SummarizedExperiment::rowData(res_de_usage$q_feat[["precursors_lip_norm"]])[c("Precursor.Id", "Protein.Group", "Genes", "Proteotypic", "Stripped.Sequence")])
               test_ <-  lapply(params_report$comparisons, 
                     build_df_result,
                     data= res_de_usage$q_feat  ,
@@ -210,7 +251,7 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
                 if (b$status == 1) stop(b$error)  
                 qf_unpair <- calculate_lip_usage(b$q_feat, i_lip = "precursors_lip_norm", 
                                           i_tc = "proteins_tc",
-                                           contrasts = colnames(b$contr_exp))
+                                           contrasts = base::colnames(b$contr_exp))
                 if (qf_unpair$status == 1) stop(qf_unpair$error)  
                 ## remove all :
                 assays_to_keep <- c("precursors_lip_norm", "precursors_tc_norm" )
@@ -252,36 +293,31 @@ process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
   
 }
 
-#' Build Result Data Frame for a Single Contrast
+#' @title Build Result Data Frame for a Single Contrast
 #'
+#' @description
 #' Internal helper function to extract, format, and standardize differential expression 
-#' results for a specific contrast. It handles both "paired" (usage in a separate assay) 
-#' and "unpaired" (usage calculated within the same assay) workflows by unifying column names.
+#' results for a specific contrast. It handles both "paired" and "unpaired" 
+#' workflows by unifying column names and generating associated plots.
 #'
-#' @param label \code{character(1)}. The name of the contrast to extract (e.g., "TreatmentA - TreatmentB").
-#' @param data A \code{QFeatures} object containing the statistical results in its \code{rowData}.
-#' @param layer \code{character(1)}. The name of the main assay (usually the normalized LiP assay) 
-#'   containing the protein-level or peptide-level fold changes.
-#' @param layer_ \code{character(1)} or \code{NULL}. The name of the secondary assay (usually the 
-#'   Usage assay). 
-#'   \itemize{
-#'     \item If provided (Paired analysis), results are fetched from this layer and joined.
-#'     \item If \code{NULL} (Unpaired analysis), the function looks for usage statistics 
-#'           (e.g., \code{pval_usage}) inside \code{layer} and renames them to match 
-#'           the standard format (\code{usage_pval}).
-#'   }
-#' @param df_anno \code{data.frame}. A data frame containing annotation metadata. Must contain 
-#'   a column named \code{"Precursor.Id"} for joining.
+#' @param label Character. The name of the contrast (e.g., "TreatmentA - TreatmentB").
+#' @param data A QFeatures object.
+#' @param layer Character. Main assay name (normalized LiP).
+#' @param layer_ Character or NULL. Secondary assay name (Usage).
+#' @param df_anno data.frame. Precursor metadata for joining.
+#' @param mapping_df data.frame. FASTA/Protein mapping metadata.
+#' @param params list. Analysis parameters.
 #'
-#' @return A \code{list} containing a single element \code{df}, which is the combined 
-#'   data frame of statistics and annotations for the requested contrast.
+#' @return A list containing the results table and serialized/lean plot objects.
 #' 
 #' @importFrom SummarizedExperiment rowData
-#' @importFrom dplyr rename rename_with left_join mutate full_join relocate
+#' @importFrom QFeatures joinAssays
+#' @importFrom dplyr rename rename_with left_join mutate full_join relocate select filter join_by contains
 #' @importFrom tibble rownames_to_column
 #' @importFrom stringr str_remove fixed
+#' @importFrom ggplot2 ggplotGrob
+#' @importFrom rlang .data
 #' @keywords internal
-
 
 build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapping_df, params){
  # --- 1. Process Assay A (e.g., Lip normalized) ---
@@ -298,7 +334,7 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
     
       #res_layer__df <- res_layer__df[, !sapply(res_layer__df, is.list)] # Drop models
       res_layer__df <-  res_layer__df %>%   rownames_to_column(var = "Precursor.Id") %>% 
-                                      rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -Precursor.Id)
+                                      rename_with(~paste0("usage_", str_remove(.x, fixed(paste0(label, ".")))), .cols = -.data$Precursor.Id)
     # Merge A and B
     res_combined <- full_join(res_layer_df, res_layer__df, by = "Precursor.Id")  
   }else {
@@ -307,18 +343,18 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
     # We rename them to match the paired prefixes (usage_).
     res_combined <- res_layer_df %>%
       dplyr::rename(
-        usage_logFC   = usage,            # 'usage' is the logFC
-        usage_pval    = pval_usage,
-        usage_adjPval = adjPval_usage,
-        usage_se      = se_usage,
-        usage_t       = t_usage,
-        usage_df      = df_usage
+        usage_logFC   = .data$usage,            # 'usage' is the logFC
+        usage_pval    = .data$pval_usage,
+        usage_adjPval = .data$adjPval_usage,
+        usage_se      = .data$se_usage,
+        usage_t       = .data$t_usage,
+        usage_df      = .data$df_usage
       )
   }
   # --- 3. Final Join with Annotation ---
   final_df <- res_combined %>% 
     left_join(df_anno, by = "Precursor.Id") %>%
-    mutate(contrast = label) # Good for downstream filtering
+    mutate(contrast = .env$label) # Good for downstream filtering
   
   # --4 join with sequence 
   final_df <- final_df %>% 
@@ -330,18 +366,23 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
   
   ## filtering null adj pval 
 
-  full_toptable <- full_toptable %>% filter( ! is.na(usage_adjPval) & ( ! is.na(adjPval))) 
-  full_toptable <- full_toptable %>% select(Precursor.Id, usage_adjPval,usage_df,usage_logFC,usage_pval,usage_se,
-                            usage_t,Protein.Group,Genes,Proteotypic,Stripped.Sequence, contrast,Protein.Sequence,
-                            length, missed_cleavages, total_repeats,start,end,pep_type,AA_last) %>% 
-                            filter(! is.na(usage_adjPval)) 
+  full_toptable <- full_toptable %>% dplyr::filter(!is.na(.data$usage_adjPval) & (!is.na(.data$adjPval)))
+  full_toptable <- full_toptable %>% 
+                                  dplyr::select(
+                                    .data$Precursor.Id, .data$usage_adjPval, .data$usage_df, .data$usage_logFC, 
+                                    .data$usage_pval, .data$usage_se, .data$usage_t, .data$Protein.Group, 
+                                    .data$Genes, .data$Proteotypic, .data$Stripped.Sequence, .data$contrast, 
+                                    .data$Protein.Sequence, .data$length, .data$missed_cleavages, 
+                                    .data$total_repeats, .data$start, .data$end, .data$pep_type, .data$AA_last
+                                  ) %>% 
+                                  dplyr::filter(!is.na(.data$usage_adjPval))
 
    # Define a NEW "Grob Stripper"
   as_lean_grob <- function(p) {
     if (is.null(p)) return(NULL)
     
     # 1. Convert ggplot to a gtable/grob (this 'renders' the data into coordinates)
-    g <- ggplotGrob(p)
+    g <- ggplot2::ggplotGrob(p)
     
     # 2. This object is now just 'points and lines'—the 160MB dataframe is GONE.
     return(g)
@@ -379,7 +420,7 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
       title = paste0("Volcano ", 'TEST' ),
       to_save= FALSE
     )
-      res_usage_plt <- clean_plotly(res_usage$volcano)
+      res_usage_plt <-  res_usage  # clean_plotly(res_usage$volcano)
      
      #res_usage_grob <- as_lean_grob(res_usage$volcano)
     
@@ -393,10 +434,10 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
   
     res_ncorrect_grob <- as_lean_grob(res_correct_file$volcano)
 
-  prot_seq_ <-  mapping_df %>% filter(Accession %in% res_usage$POI_l)
+  prot_seq_ <-  mapping_df %>% dplyr::filter(.data$Accession %in% res_usage$POI_l)
   
   se <- joinAssays(data,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") %>%  
-          getWithColData("joinedAssay")
+          MultiAssayExperiment::getWithColData("joinedAssay")
   
   
    barplot_id <- plot_barcode (res_usage$POI_l, se , 
@@ -418,8 +459,9 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
 }
 
 
-#' Calculate LiP-MS Usage (Corrected logFC)
+#' @title Calculate LiP-MS Usage (Corrected logFC)
 #'
+#' @description
 #' This function corrects LiP peptide log-fold changes (logFC) by subtracting the 
 #' total protein (TC) logFC. It performs error propagation for standard errors 
 #' and re-calculates p-values for the "usage" (the peptide change relative to 
@@ -437,11 +479,12 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
 #' @param satterthwaite \code{logical(1)}: Whether to use the Satterthwaite 
 #'   approximation for degrees of freedom. Default is \code{FALSE}.
 #'
-#' @return A \code{QFeatures} object with updated \code{rowData} in the \code{i_lip} assay.
-#' @export
-#'
+#' @return A \code{list} with \code{status}, \code{error}, and the updated \code{QFeatures} object.
+#' 
 #' @importFrom SummarizedExperiment rowData
 #' @importFrom stats pt p.adjust
+#' @importFrom S4Vectors DataFrame
+#' @importFrom logger log_info
 
 calculate_lip_usage <- function(qf, i_lip, i_tc, contrasts, 
                                fcol_lip = "Protein.Group", 
@@ -466,7 +509,7 @@ calculate_lip_usage <- function(qf, i_lip, i_tc, contrasts,
     }
     
     # Rename TC columns to avoid collisions
-    colnames(res_tc) <- paste0(colnames(res_tc), "_tc")
+    base::colnames(res_tc) <- paste0(base::colnames(res_tc), "_tc")
     
     # 2.2. Align TC results to the LiP precursors
     # We subset the TC results using the match index
@@ -476,7 +519,7 @@ calculate_lip_usage <- function(qf, i_lip, i_tc, contrasts,
     # 2.3. Combine and calculate usage
     # We convert to a standard data frame temporarily for easier calculation
     res_lip <- SummarizedExperiment::rowData(qf[[i_lip]])[[contrast]]
-    combined <- cbind(res_lip, aligned_tc)
+    combined <- BiocGenerics::cbind(res_lip, aligned_tc)
     
     # Calculation logic
      log_info('Compute usage  logFC, se, df ...')
@@ -505,8 +548,9 @@ calculate_lip_usage <- function(qf, i_lip, i_tc, contrasts,
   }
 
   return( list(error= '', status= 0, qf =qf ))
-  }, error = function(e) {
-        print(paste("Unpaired calculate_lip_usage  :  ",err))
+  }, error = function(err) {
+        msg <- conditionMessage(err) # <--- Using 'err' here
+        logger::log_error("LiP usage error: {msg}")
         return( list(error= err, status= 1, qf =NULL ))
 
   })
@@ -514,19 +558,29 @@ calculate_lip_usage <- function(qf, i_lip, i_tc, contrasts,
 
 ##-----------------
 
+#' @title Check Design File Requirements
+#' 
+#' @description 
+#' Performs critical validation checks on the experimental design data frame:
+#' \enumerate{
+#'   \item Verifies all required columns are present.
+#'   \item Ensures the 'Run' column does not contain file extensions (e.g., .raw, .mzML).
+#'   \item Validates that the 'Pipeline' column only contains "LiP" or "TC".
+#' }
+#'
+#' @param df A \code{data.frame} containing the experimental design.
+#' @param required_cols A \code{character} vector of column names that must exist in \code{df}.
+#' 
+#' @return A \code{list} with two elements:
+#' \itemize{
+#'   \item \code{status}: Integer; 0 for success, 1 if a validation error was found.
+#'   \item \code{error}: Character; a descriptive error message if \code{status} is 1.
+#' }
+#' 
 #' @author Andrea Argentini
-#' @title check_design_requirement
-#' @description This function performs the following checks on the design file:
-#'  1) Check required columns exist
-#'  2) Check Run column has no file extensions
-#'  3) Check Pipeline column values
-#' @param df Input data frame where features need to be checked
-#' @param required_cols Character vector of required column names
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if no error, 1 if an error was found}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
+#' 
+#' 
 #' @importFrom logger log_info
-
 
 check_design_requirement <- function(df, required_cols) {
   # Default result = no error
@@ -541,8 +595,10 @@ check_design_requirement <- function(df, required_cols) {
   }
   
   # 2. Check Run column has no file extensions
-  if ("Run" %in% names(df)) {
-    bad_runs <- grep("\\.[A-Za-z0-9]+$", df$Run, value = TRUE)
+  if ("Run" %in% base::colnames(df)) {
+    # Added trimws to handle accidental spaces before checking extensions
+    run_vals <- trimws(as.character(df$Run))
+    bad_runs <- grep("\\.[A-Za-z0-9]+$", run_vals, value = TRUE)
     if (length(bad_runs) > 0) {
       result$error <- paste(
         "Column 'Run' contains values with file extensions:",
@@ -556,7 +612,8 @@ check_design_requirement <- function(df, required_cols) {
   # 3. Check Pipeline column values
   if ("Pipeline" %in% names(df)) {
     allowed <- c("LiP", "TC")
-    bad_vals <- setdiff(unique(df$Pipeline), allowed)
+    # unique(df$Pipeline) handles factors or characters correctly
+    bad_vals <- base::setdiff(unique(as.character(df$Pipeline)), allowed)
     if (length(bad_vals) > 0) {
       result$error <- paste(
         "Column 'Pipeline' contains invalid values:",
@@ -572,8 +629,6 @@ check_design_requirement <- function(df, required_cols) {
 }
 
 
-#' Create QFeatures Object from Proteomics Reports
-#'
 #' @title create_qfeat_
 #' 
 #' @description 
@@ -583,18 +638,22 @@ check_design_requirement <- function(df, required_cols) {
 #' @param annotation_df A data frame containing sample metadata (colData).
 #' @param report_file1 A data frame containing quantitative proteomics data.
 #' @param report_file2 Optional; secondary report file (default is NULL).
-#' @param diann_flag diann or spectronauts dia_direct
+#' @param diann_flag Logical; TRUE if data is from DIA-NN, FALSE for Spectronaut.
+#' 
 #' @return A list with status, error message, and the resulting QFeatures object.
 #'
+#' @export
+#'
 #' @import QFeatures
-#' @importFrom SummarizedExperiment assay colData rowData
+#' @importFrom SummarizedExperiment assay colData rowData "rowData<-"
 #' @importFrom MultiAssayExperiment getWithColData
-#' @importFrom dplyr filter
+#' @importFrom dplyr filter bind_rows
 #' @importFrom magrittr %>%
 #' @importFrom rlang .data
 #' @importFrom stats model.matrix
 #' @importFrom matrixStats rowMins
 #' @importFrom logger log_info
+#' @importFrom BiocGenerics ncol
 #'
 create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, diann_flag) {
 
@@ -612,19 +671,14 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, dian
 
   tryCatch(expr = {
     log_info('Importing data into QFeatures ...')
-
     # 1. Initial Import and subsetting
     # Filter using .data to avoid global variable warnings
     if (! is.null(report_file2) ){
-        input_lip <- report_file1 %>%
-      dplyr::filter(.data$Precursor.Quantity > 4)
-        input_tc <- report_file2 %>%
-      dplyr::filter(.data$Precursor.Quantity > 4)
-      input_data <- bind_rows(input_lip, input_tc)
-
-
-    }else{input_data <- report_file1 %>%
-      dplyr::filter(.data$Precursor.Quantity > 4)
+        input_lip <- report_file1 %>% dplyr::filter(.data$Precursor.Quantity > 4)
+        input_tc  <- report_file2 %>% dplyr::filter(.data$Precursor.Quantity > 4)
+        input_data <- dplyr::bind_rows(input_lip, input_tc)
+    }else{
+      input_data <- report_file1 %>% dplyr::filter(.data$Precursor.Quantity > 4)
       }
     
     
@@ -687,24 +741,12 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, dian
 }
 
 
-
-#' Normalize and Aggregate Proteomics Data
-#'
 #' @title Log-Transformation, Median Normalization, and Protein Aggregation
 #' 
 #' @description 
 #' Performs log2 transformation on LiP and TC assays, calculates sample-based 
 #' normalization factors using common features, and aggregates TC precursors 
 #' to the protein level.
-#' 
-#' The normalization scaling factor is calculated by:
-#' \enumerate{
-#'   \item Extracting the assay data.
-#'   \item Removing features with missing values.
-#'   \item Calculating column-wise medians to obtain log2 scale normalization factors.
-#'   \item Zero-centering the normalization factors.
-#'   \item Subtracting factors from intensities using \code{QFeatures::sweep}.
-#' }
 #'
 #' @param q_feat A \code{QFeatures} object containing "precursors_lip" and "precursors_tc" assays.
 #'
@@ -715,14 +757,15 @@ create_qfeat_ <- function(annotation_df, report_file1, report_file2 = NULL, dian
 #'   \item \code{result}: The updated \code{QFeatures} object.
 #' }
 #'
+#'
 #' @import QFeatures
 #' @importFrom SummarizedExperiment assay
 #' @importFrom matrixStats colMedians
 #' @importFrom MsCoreUtils medianPolish
 #' @importFrom logger log_info
 #' @importFrom rlang .data
+#' @importFrom QFeatures logTransform sweep
 #' @importFrom stats median na.exclude
-#'
 
 normalization_scaling_factor <- function(q_feat ){
 
@@ -738,15 +781,18 @@ normalization_scaling_factor <- function(q_feat ){
   medianNormCommonFeatures <- function(qf, i, name = "normAssay") {
     # 1. Extract assay, 2. Remove missing, 3. Calculate column medians
     m <- SummarizedExperiment::assay(qf[[i]])
-    m_complete <- stats::na.exclude(m)
-    
+    #m_complete <- stats::na.exclude(m)
+    m_complete <- m[rowSums(is.na(m)) == 0, , drop = FALSE]
+    if (nrow(m_complete) == 0) {
+             stop(paste("No common features found in assay", i, "to calculate normalization factors."))
+    }
     norm_factors <- matrixStats::colMedians(m_complete)
     
     # 4. Zero-center the normalization factors
     norm_factors <- norm_factors - stats::median(norm_factors)
     
     # 5. Sweep out the factors
-    qf <- QFeatures::sweep(
+    qf <- sweep(
       qf, 
       MARGIN = 2, 
       STATS = norm_factors, 
@@ -782,7 +828,7 @@ normalization_scaling_factor <- function(q_feat ){
     },
     error = function(err) {
       msg <- conditionMessage(err)
-      message(paste("normalization_scaling_factor Error: ", msg))
+      logger::log_info("normalization_scaling_factor Error: {msg}")
       # Return the object in its current state even if error occurs
       return(list(error = msg, status = 1, result = q_feat))
     }
@@ -791,7 +837,7 @@ normalization_scaling_factor <- function(q_feat ){
 
 ####----
 
-#' Compute LiP-MS Usage (Accessibility)
+#' Compute LiP-MS Usage 
 #'
 #' @title compute_usage
 #' 
@@ -815,6 +861,7 @@ normalization_scaling_factor <- function(q_feat ){
 #' @importFrom rlang .data
 #' @importFrom logger log_info
 #' @importFrom methods as
+#' @importFrom stats formula 
 #'
 compute_usage <- function(q_feat ){
 
@@ -844,37 +891,27 @@ calculate_usage_paired <- function(qf, i_lip = "precursors_lip_norm",
      q_feat <- calculate_usage_paired(q_feat, match_cols_lip_to_tc = 1:ncol(q_feat[["precursors_lip_norm"]]))
       return( list(error= '', status= 0,result =q_feat ))
    },error = function(err){
-        print(paste("compute usage/paired design :  ",err))
+        msg <- conditionMessage(err)
+        logger::log_info("compute_usage error: {msg}")
         return( list(error= err, status= 1,result = NULL ))
   } )
  
 }
 
-#' Classify Peptide Trypticity
-#' @title classify_trypticity
-#' Categorizes peptides as Tryptic, Semi-Tryptic, or Non-Tryptic based on the 
-#' presence of Lysine (K) or Arginine (R) at the cleavage sites, while 
-#' accounting for protein termini and N-terminal Methionine excision.
-#'
-#' @param peptide A character vector of peptide sequences.
-#' @param protein A character vector of the parent protein sequences.
-#' @param start_pos A numeric vector indicating the starting position of the 
-#' peptide within the protein (1-based indexing).
-#'
-#' @return A character vector of the same length as `peptide` containing 
-#' "Tryptic", "Semi-Tryptic", "Non-Tryptic", or "Ambiguous".
+#' @title Classify Peptide Trypticity
 #' 
-#' @details 
-#' The classification rules are:
-#' \itemize{
-#'   \item \strong{Tryptic}: Both ends follow tryptic rules (preceded by K/R or at N-term; ends in K/R or at C-term).
-#'   \item \strong{Semi-Tryptic}: Only one end follows tryptic rules.
-#'   \item \strong{Non-Tryptic}: Neither end follows tryptic rules.
-#' }
-#' Special case: If a peptide starts at position 2 and the first amino acid 
-#' of the protein is Methionine (M), the N-terminus is considered tryptic 
-#' due to common N-terminal Methionine excision.
+#' @description 
+#' Categorizes peptides as Tryptic, Semi-Tryptic, or Non-Tryptic based on 
+#' Protease (Trypsin) cleavage rules, accounting for protein termini 
+#' and N-terminal Methionine excision.
 #'
+#' @param peptide Character vector of peptide sequences.
+#' @param protein Character vector of the parent protein sequences.
+#' @param start_pos Numeric vector of the 1-based start position.
+#'
+#' @return A character vector: "Tryptic", "Semi-Tryptic", "Non-Tryptic", or "Ambiguous".
+#'
+#' #' @importFrom rlang .data
   
 classify_trypticity <- function(peptide, protein, start_pos) {
  
@@ -910,12 +947,12 @@ classify_trypticity <- function(peptide, protein, start_pos) {
   )
 }
   
-#' Calculate Protein Sequence Coverage
-#' @title calculate_coverage
-#' @author Andrea Argentini
-#' This function calculates the fraction of a protein sequence covered by a set 
+#' @title Calculate Protein Sequence Coverage
+#' 
+#' @description 
+#' Calculates the fraction of a protein sequence covered by a set 
 #' of peptides or fragments. It accounts for overlapping regions by treating 
-#' the segments as genomic-style ranges.
+#' the segments as range-based intervals.
 #'
 #' @param start A numeric vector of start positions for the peptides.
 #' @param end A numeric vector of end positions for the peptides.
@@ -926,10 +963,13 @@ classify_trypticity <- function(peptide, protein, start_pos) {
 #' sequence covered. Returns `NA` if `protein_length` is `NA` or if no valid 
 #' start/end pairs are provided.
 #'
-#' @importFrom IRanges IRanges
-#' @importFrom S4Vectors coverage
+#' @author Andrea Argentini
+#' @export
+#'
+#' @importFrom IRanges IRanges coverage
 #' @importFrom magrittr %>%
 #' @importFrom stats na.omit
+#' @importFrom methods as
 #' 
 
  calculate_coverage <- function(start, end, protein_length) {
@@ -944,105 +984,95 @@ classify_trypticity <- function(peptide, protein, start_pos) {
   return(covered/protein_length)
 } 
 
-#' Characterize Peptide Properties and Mapping
-#'
-#' @title pep_char
+#' @title Characterize Peptide Properties and Mapping
 #' 
 #' @description 
-#' This function annotates a data frame of peptides with biochemical and 
-#' positional properties. Finally, we define a function for adding and 
-#' adjusting data for the features to:
-#' \enumerate{
-#'   \item Define missed_cleavages
-#'   \item Calculate how many times precursor is repeated in protein
-#'   \item Calculate start and end position in a protein
-#'   \item Define peptide type
-#'   \item Extract last amino acid
-#' }
+#' Annotates a data frame of peptides with biochemical and positional properties 
+#' such as missed cleavages, mapping positions, and trypticity.
 #'
-#' @param table A data frame or tibble containing peptide and protein sequences.
-#' @param prot_seq A character string specifying the column name for the 
-#' full protein sequence. Default is `"Protein.Sequence"`.
-#' @param pep_seq A character string specifying the column name for the 
-#' stripped peptide sequence. Default is `"Stripped.Sequence"`.
-#'
-#' @return A data frame with the following additional columns:
-#' \itemize{
-#'   \item \code{missed_cleavages}: Count of internal [RK] not followed by P.
-#'   \item \code{total_repeats}: Number of times the peptide occurs in the protein.
-#'   \item \code{start}: Starting position of the first occurrence.
-#'   \item \code{end}: Ending position of the first occurrence.
-#'   \item \code{pep_type}: Trypticity classification (Tryptic, Semi, Non, or Ambiguous).
-#'   \item \code{AA_last}: The C-terminal amino acid of the peptide.
-#' }
-#'
-#' @importFrom dplyr mutate select
+#' @param table A data frame or tibble.
+#' @param prot_seq Character. Column name for protein sequence (default "Protein.Sequence").
+#' @param pep_seq Character. Column name for stripped peptide sequence (default "Stripped.Sequence").
+#' 
+#' @return A data frame with additional columns for sequence properties.
+#' 
+
+#' @importFrom dplyr mutate select .data
 #' @importFrom stringr str_count str_locate str_sub
 #' @importFrom magrittr %>%
-#' @importFrom rlang sym
 #'
-pep_char <- function(table, prot_seq="Protein.Sequence", pep_seq="Stripped.Sequence")
-{
-  table <- table |>
-    mutate(missed_cleavages = get(pep_seq) %>%
-             str_count("[RK](?!(P|$))"), #1.
-         total_repeats = str_count(get(prot_seq), get(pep_seq)), #2.
-         tmp = str_locate(Protein.Sequence, Stripped.Sequence),
-         start = tmp[,1],
-         end = tmp[,2], #3.
-         pep_type = ifelse(
-           (total_repeats > 1) | is.na(total_repeats),
-           "Ambiguous",
-           classify_trypticity(
-             peptide = Stripped.Sequence, 
-             protein = Protein.Sequence, 
-             start_pos = start)), #4.
-         AA_last = str_sub(Stripped.Sequence, -1, -1) #5.
-           ) %>%
-    select(-tmp)
-} 
+pep_char <- function(table, prot_seq = "Protein.Sequence", pep_seq = "Stripped.Sequence") {
+  
+  table <- table %>%
+    dplyr::mutate(
+      # 1. Missed Cleavages (using .data instead of get() for stability)
+      missed_cleavages = stringr::str_count(.data[[pep_seq]], "[RK](?!(P|$))"),
+      
+      # 2. Total Repeats
+      total_repeats = stringr::str_count(.data[[prot_seq]], .data[[pep_seq]]),
+      
+      # 3. Positional Mapping
+      # We extract the matrix columns immediately to avoid keeping the matrix 'tmp'
+      start = stringr::str_locate(.data[[prot_seq]], .data[[pep_seq]])[, 1],
+      end   = stringr::str_locate(.data[[prot_seq]], .data[[pep_seq]])[, 2],
+      
+      # 4. Trypticity Classification
+      pep_type = ifelse(
+        (.data$total_repeats > 1) | is.na(.data$total_repeats),
+        "Ambiguous",
+        classify_trypticity(
+          peptide = .data[[pep_seq]], 
+          protein = .data[[prot_seq]], 
+          start_pos = .data$start
+        )
+      ),
+      
+      # 5. C-terminal Amino Acid
+      AA_last = stringr::str_sub(.data[[pep_seq]], -1, -1)
+    )
+  
+  return(table)
+}
 
 
-#' Annotate Precursors for QC Visualization
-#'
 #' @title Precursor Annotation for Quality Control Plots
 #' 
 #' @description 
 #' Converts QFeatures assays into a long-format data frame and performs 
 #' comprehensive annotation including protein mapping, peptide characterization, 
-#' and condition formatting. This prepared data is typically used for QC 
-#' plots like MDS or intensity distributions.
+#' and condition formatting.
 #'
-#' @param q_feat A \code{QFeatures} object containing "precursors_lip_norm", 
-#' "precursors_tc_norm", and "precursors_lip_usage" assays.
-#' @param mapping A data frame used for joining protein accessions to metadata. 
-#' Must contain an \code{Accession} column.
+#' @param q_feat A \code{QFeatures} object.
+#' @param mapping A data frame used for joining protein accessions to metadata.
+#' @param type Character. Either "paired" or "unpaired".
 #'
 #' @return A list with the following components:
 #' \itemize{
-#'   \item \code{error}: Character string containing error messages, if any.
+#'   \item \code{error}: Character string containing error messages.
 #'   \item \code{status}: Integer (0 for success, 1 for error).
 #'   \item \code{result}: An annotated data frame in long format.
 #' }
 #'
+#' @export
 #' @importFrom QFeatures longForm
-#' @importFrom dplyr left_join mutate case_match join_by
+#' @importFrom dplyr left_join mutate case_match join_by .data
 #' @importFrom magrittr %>%
-#' @importFrom rlang .data
 #' @importFrom logger log_info
-#'
 
 
 qc_precursor_annotation <- function(q_feat, mapping, type) {
   tryCatch(expr = { 
     log_info('Annotate precursor for QC plot ...')
     
-    # 1. Define layers
-    layer <- if (type == 'paired') {
+    # 1. Define layers based on analysis type
+    # Using 'intersect' is safer in case an assay name was modified elsewhere
+    available_layers <- names(q_feat)
+    target_layers <- if (type == 'paired') {
       c("precursors_lip_norm", "precursors_tc_norm", "precursors_lip_usage")
     } else {
       c("precursors_lip_norm", "precursors_tc_norm")
     }
+    layer <- intersect(target_layers, available_layers)
     
     # 2. Extract and Join
     qcObj <- q_feat[,,layer] %>%
@@ -1053,8 +1083,7 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
       ) %>%
       as.data.frame() %>%
       # Fix: Removed x$ and y$ references for join_by compatibility
-      dplyr::left_join(mapping, by = dplyr::join_by(Protein.Group == Accession)) %>%
-      pep_char() %>%
+dplyr::left_join(mapping, by = dplyr::join_by(Protein.Group == Accession)) %>%      pep_char() %>%
       # Fix: Moved this OUTSIDE the 'if' so all types get clean labels
       dplyr::mutate(
         assay = dplyr::case_match(
@@ -1079,106 +1108,98 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
 
 
 
+#' @title Parse Proteomics Input and Design Files
+#' 
+#' @description 
+#' Reads and parses input parquet file(s) and the experiment design file. 
+#' Detects whether reports are in DIA-NN or Spectronaut format, performs 
+#' column renaming to a unified standard, and validates the design file.
+#'
+#' @param input_parquet_tc Path to the TC parquet file (optional).
+#' @param input_parquet_lip Path to the LiP parquet file.
+#' @param input_design Path to the experiment design file (tsv).
+#' 
+#' @return A list containing status, error message, parsed reports (lip, tc), 
+#'   the design data frame, and a diann_flag.
+#' 
 #' @author Andrea Argentini
-#' @title parse_input
-#' @description Read and parse input parquet file(s) and the experiment design file. Detects whether reports are in DIA‑NN format, reads TC and/or LiP reports (from one or two parquet files depending on 'dual'), validates the design using check_design_requirement, and returns parsed reports along with the design and a diann_flag.
-#' @param input_parquet_tc Path to the TC parquet file (used when dual = TRUE)
-#' @param input_parquet_lip Path to the LiP parquet file (or the single combined parquet when dual = FALSE)
-#' @param input_design Path to the experiment design file (tsv/arrow readable)
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{lip}{data.frame or tibble; LiP report data (NULL on error)}
-#'   \item{tc}{data.frame or tibble; TC report data or NULL if not provided}
-#'   \item{design}{data.frame or tibble; parsed design file}
-#'   \item{diann_flag}{logical; TRUE if the report looks like DIA‑NN (contains a "Run" column)}
+#' 
 #' @importFrom arrow read_parquet read_tsv_arrow
-#' @importFrom dplyr rename
-#' @importFrom rlang .data
+#' @importFrom dplyr rename .data
 #' @importFrom logger log_info
-parse_input <- function(input_parquet_tc, input_parquet_lip , input_design) {
-  # Internal helper to check for DIA-NN format
+#' @importFrom magrittr %>%
+parse_input <- function(input_parquet_tc, input_parquet_lip, input_design) {
   
-  is_diann <- function(df) {
-    "Run" %in% colnames(df)
-  }
+  # Helper to check for DIA-NN format
+  is_diann <- function(df) { "Run" %in% base::colnames(df) }
+  
+  # Unified renaming map for Spectronaut (New_Name = Old_Name)
+  spec_rename_map <- c(
+    Run = "R_FileName",
+    Genes = "PG_Genes",
+    Protein.Group = "PG_ProteinGroups",
+    Protein.Names = "PG_ProteinNames",
+    PG.Q.Value = "PG_Qvalue",
+    Precursor.Id = "PEP_GroupingKey",
+    Stripped.Sequence = "PEP_StrippedSequence",
+    Decoy = "EG_IsDecoy",
+    Precursor.Charge = "FG_Charge",
+    Q.Value = "FG_Qvalue",
+    Precursor.Quantity = "FG_MS2RawQuantity"
+  )
+
   tryCatch(
     expr = {
       # 1. Loading Reports
-      if ( ! ( is.null( input_parquet_tc) || input_parquet_tc == "") ) {
-        log_info('Reading Tc and Lip from SEPARATE parquet files ...')
+      if (!is.null(input_parquet_tc) && input_parquet_tc != "") {
+        logger::log_info('Reading TC and LiP from SEPARATE parquet files ...')
         TC_report <- arrow::read_parquet(input_parquet_tc)
         LiP_report <- arrow::read_parquet(input_parquet_lip)
-  
       } else {
-        log_info('Reading both LiP and TC from ONE parquet file ...')
+        logger::log_info('Reading both LiP and TC from ONE parquet file ...')
         LiP_report <- arrow::read_parquet(input_parquet_lip)
         TC_report <- NULL
       }
       
+      # 2. Detect Format and Standardize
       diann_flag <- is_diann(LiP_report)
-     if (diann_flag == FALSE ){ 
-      LiP_report <- LiP_report %>%
-                rename(
-                  Run = R_FileName,   # nieuwe naam = oude naam
-                  Genes = PG_Genes,
-                  Protein.Group = PG_ProteinGroups,
-                  Protein.Names = PG_ProteinNames,
-                  PG.Q.Value = PG_Qvalue,
-                  Precursor.Id = PEP_GroupingKey,
-                  Stripped.Sequence = PEP_StrippedSequence,
-                  Decoy = EG_IsDecoy,
-                  Precursor.Charge = FG_Charge,
-                  Q.Value = FG_Qvalue,
-                  Precursor.Quantity = FG_MS2RawQuantity
-                )
-        if  ( ! ( is.null( input_parquet_tc) || input_parquet_tc == "") ) {
-          TC_report <- TC_report %>%
-              rename(
-                Run = R_FileName,   # nieuwe naam = oude naam
-                Genes = PG_Genes,
-                Protein.Group = PG_ProteinGroups,
-                Protein.Names = PG_ProteinNames,
-                PG.Q.Value = PG_Qvalue,
-                Precursor.Id = PEP_GroupingKey,
-                Stripped.Sequence = PEP_StrippedSequence,
-                Decoy = EG_IsDecoy,
-                Precursor.Charge = FG_Charge,
-                Q.Value = FG_Qvalue,
-                Precursor.Quantity = FG_MS2RawQuantity)
-        }     
-     }
+      
+      if (!diann_flag) {
+        logger::log_info('Standardizing Spectronaut format to DIA-NN style...')
+        # Use any_of to safely rename only columns that exist
+        LiP_report <- LiP_report %>% dplyr::rename(dplyr::any_of(spec_rename_map))
+        
+        if (!is.null(TC_report)) {
+          TC_report <- TC_report %>% dplyr::rename(dplyr::any_of(spec_rename_map))
+        }
+      }
 
-      # 2. Loading and Validating Design
-      log_info('Reading experiment Design file ...')
+      # 3. Loading and Validating Design
+      logger::log_info('Reading experiment Design file ...')
       design <- arrow::read_tsv_arrow(input_design)
       
       col_design_required <- c('Run', 'Pipeline', 'Treatment', 'Condition', 'Replicate', 'CondRep')
-      
-      # Assuming check_design_requirement is an internal package function
       checkdesign <- check_design_requirement(design, col_design_required)
-      
-      # Use .data$Run to avoid "no visible binding for global variable" warning
-      design <- design %>% 
-        dplyr::rename(runCol = .data$Run)
       
       if (checkdesign$status == 1) {
         return(list(error = checkdesign$error, status = 1, lip = NULL))
-      } else {
-        return(list(
-          error      = '', 
-          status     = 0,
-          lip        = LiP_report,
-          tc         = TC_report,
-          design     = design,
-          diann_flag = diann_flag
-        ))
       }
+
+      # Rename Run to runCol for QFeatures compatibility
+      design <- design %>% dplyr::rename(runCol = .data$Run)
+      
+      return(list(
+        error      = '', 
+        status     = 0,
+        lip        = LiP_report,
+        tc         = TC_report,
+        design     = design,
+        diann_flag = diann_flag
+      ))
     },
     error = function(err) {
-      # Extracting the error message specifically
       msg <- conditionMessage(err)
-      message(paste("Input Parquet Error: ", msg))
+      logger::log_error("Input Parquet Error: {msg}")
       return(list(error = msg, status = 1, lip = NULL))
     }
   )
@@ -1186,108 +1207,183 @@ parse_input <- function(input_parquet_tc, input_parquet_lip , input_design) {
 
 
 
-
+#' @title Calculate Sequence Coverage per Protein
+#' 
+#' @description 
+#' Calculates the fraction of each protein sequence covered by the detected 
+#' peptides. Overlapping peptide regions are reduced to unique amino acid 
+#' positions to ensure accurate coverage mapping.
+#'
+#' @param report A \code{data.frame} or \code{tibble} containing "Accession", 
+#'   "length", "start", and "end".
+#' 
+#' @return A list with the following components:
+#' \itemize{
+#'   \item \code{status}: Integer (0 for success, 1 for error).
+#'   \item \code{error}: Character string containing error messages.
+#'   \item \code{result}: The original data frame with an added "coverage" column.
+#' }
+#' 
 #' @author Andrea Argentini
-#' @title calculate_coverages
-#' @description Calculate sequence coverage per protein accession across the dataset.
-#' For each accession the function reduces peptide ranges (start/end) and computes the
-#' fraction of covered amino-acid positions relative to the reported protein length, then
-#' joins the coverage value back to the original report.
-#' @param report Data frame or tibble containing at minimum the columns:
-#'   "Accession", "length" (protein length), "start" and "end" (peptide coordinates)
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{result}{data.frame; original report augmented with a numeric column "coverage" (per-accession coverage)}
-#' @importFrom dplyr distinct left_join join_by group_by summarise
+#'
+#' @importFrom dplyr distinct left_join group_by summarise .data
 #' @importFrom IRanges IRanges reduce width
 #' @importFrom logger log_info
-
+#' @importFrom magrittr %>%
 
 calculate_coverages <- function(report) {
 
-  tryCatch( expr = {
-        log_info('Computing Sequence Coverage ...')
+  tryCatch(expr = {
+    logger::log_info('Computing Sequence Coverage ...')
 
-        coverages <-
-          report %>%
-          distinct(Accession, length, start, end) %>%
-          group_by(Accession) %>%
-          summarise(
-            coverage = {
-              ranges <- IRanges(start = start, end = end)
-              covered_positions <- sum(width(reduce(ranges)))
-              covered_positions / length[1]},
-            .groups = "drop")
-      report_ <- report %>%   left_join(coverages, join_by(Accession))
-     return( list(error= '', status= 1,result =report_ ))
-  },error = function(err){
-    print(paste(" Coverage computation :  ",err))
-    return( list(error= err, status= 1,result =NULL ))
-  } )
+    # 1. Calculate unique coverage per Accession
+    coverages <- report %>%
+      dplyr::distinct(.data$Accession, .data$length, .data$start, .data$end) %>%
+      dplyr::group_by(.data$Accession) %>%
+      dplyr::summarise(
+        coverage = {
+          # Use stats::na.omit to prevent IRanges from crashing on missing coords
+          s <- stats::na.omit(.data$start)
+          e <- stats::na.omit(.data$end)
+          
+          if (length(s) == 0) {
+            0
+          } else {
+            ranges <- IRanges::IRanges(start = s, end = e)
+            # reduce() merges overlapping intervals into single contiguous ranges
+            covered_positions <- sum(IRanges::width(IRanges::reduce(ranges)))
+            # Accessing the first element of length for this group
+            covered_positions / .data$length[1]
+          }
+        },
+        .groups = "drop"
+      )
 
+    # 2. Join back to the original report
+    report_annotated <- report %>% 
+      dplyr::left_join(coverages, by = "Accession")
+
+    return(list(error = '', status = 0, result = report_annotated))
+
+  }, error = function(err) {
+    msg <- conditionMessage(err)
+    logger::log_error("Coverage computation error: {msg}")
+    return(list(error = msg, status = 1, result = NULL))
+  })
 }
 
 
+
+
+#' @title Read and Annotate FASTA File
+#' 
+#' @description 
+#' Reads a FASTA file and extracts protein accessions, full sequences, and 
+#' sequence lengths. It assumes a standard UniProt-style header where the 
+#' accession is the second field when split by a pipe character.
+#'
+#' @param input_fasta Path to the FASTA file (character).
+#' 
+#' @return A list with the following components:
+#' \itemize{
+#'   \item \code{status}: Integer (0 for success, 1 for error).
+#'   \item \code{error}: Character string containing error messages.
+#'   \item \code{result}: A \code{data.frame} with columns: \code{Accession}, 
+#'     \code{Protein.Sequence}, and \code{length}.
+#' }
+#' 
 #' @author Andrea Argentini
-#' @title read_fasta_ann
-#' @description Read a FASTA file and return a mapping of accession to protein sequence and sequence length. Extracts the accession (second field when splitting the FASTA header by "|") and computes protein length.
-#' @param input_fasta Path to the FASTA file to read (character)
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{result}{data.frame; mapping with columns Accession, Protein.Sequence, length (NULL on error)}
+#'
 #' @importFrom seqinr read.fasta
+#' @importFrom stringr str_extract word
 #' @importFrom stringr str_split_i
 #' @importFrom logger log_info
+#' @importFrom magrittr %>%
 
+read_fasta_ann <- function(input_fasta) {
 
+  tryCatch(expr = {
+    logger::log_info('Reading FASTA file ...')
+    
+    # Read FASTA; as.string = TRUE returns sequences as single strings
+    # seqtype = "AA" specifies Amino Acids
+    fasta_list <- seqinr::read.fasta(file = input_fasta, 
+                                     seqtype = "AA", 
+                                     as.string = TRUE, 
+                                     forceDNAtolower = FALSE)
+    
+    headers <- unlist(lapply(fasta_list, function(x) attr(x, "Annot")))
+    
+    # Clean the '>' from the start of the annotation if it exists
+    headers <- stringr::str_remove(headers, "^>")
+    # --- ADD THE NEW LOGIC HERE ---
+    # 1. Try to extract a valid UniProt Accession using Regex
+    accessions <- stringr::str_extract(headers, "[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}")
+    
+    # 3. Fallback for headers without a standard UniProt ID pattern
+    if (any(is.na(accessions))) {
+      na_idx <- is.na(accessions)
+      
+      # Check if header contains pipes
+      # If YES: split by pipe and take the 2nd element
+      # If NO: take the 2nd word (to skip 'sp')
+      accessions[na_idx] <- ifelse(
+        grepl("\\|", headers[na_idx]),
+        stringr::str_split_i(headers[na_idx], "\\|", 2),
+        stringr::word(headers[na_idx], 2) # <--- This fixes your 'sp' issue
+      )
+    }
+    
+    # 4. Final fallback: If still NA, just use the whole header
+    accessions <- ifelse(is.na(accessions), headers, accessions)
+    # --- END OF NEW LOGIC ---
 
-read_fasta_ann <- function(input_fasta ){
+    # Now create the data frame using the prepared 'accessions' vector
+    mapping <- data.frame(
+      Accession = accessions,
+      Protein.Sequence = as.character(unlist(fasta_list, use.names = FALSE)),
+      stringsAsFactors = FALSE
+    )
+    
+    # 3. Add sequence length
+    mapping$length <- nchar(mapping$Protein.Sequence)
+    
+    return(list(error = '', status = 0, result = mapping))
 
-tryCatch( expr = {
-## code here
-     log_info('Reading Fasta file ...')
-    fasta <- read.fasta(input_fasta , seqtype = "AA", as.string = T)
-  # read in human fasta file for protein sequence & length -> to calculate the coverage
-    mapping <- data.frame(Accession = fasta %>% names() %>% str_split_i("\\|", 2),
-                        Protein.Sequence = unlist(fasta))
-    mapping$length <- nchar(mapping$Protein.Sequence)  #add length of the protein sequence
-      return( list(error= '', status= 0,result =mapping ))
-  ## good exit
-},error = function(err){
-    print(paste(" Reading Fasta  :  ",err))
-    return( list(error= err, status= 1,result =NULL ))
-  } )
-
+  }, error = function(err) {
+    msg <- conditionMessage(err)
+    logger::log_error("Reading FASTA Error: {msg}")
+    return(list(error = msg, status = 1, result = NULL))
+  })
 }
 
 
 
-
-
+#' @title Fit msqrob2 Models and Test Contrasts
+#' 
+#' @description 
+#' Fits robust linear models to proteomics data using the msqrob2 framework. 
+#' It performs hypothesis testing based on a user-defined formula and 
+#' contrast matrix, handling peptide-level or protein-level quantification.
+#'
+#' @param pe A \code{QFeatures} object.
+#' @param params A list containing \code{formula} (string) and \code{comparisons} (character vector).
+#' @param layer Character. The name of the assay in \code{pe} to model.
+#' 
+#' @return A list with the following components:
+#' \itemize{
+#'   \item \code{status}: Integer (0 for success, 1 for error).
+#'   \item \code{error}: Character string containing error messages.
+#'   \item \code{q_feat}: The updated \code{QFeatures} object with models and test results.
+#'   \item \code{contr_exp}: The contrast matrix used for testing.
+#' }
+#' 
 #' @author Andrea Argentini
-#' @title msqrob_model
-#' @description Fit msqrob2 models and perform hypothesis testing for differential expression.
-#' Given a QFeatures object, a parameter list (including a model formula and comparisons),
-#' and the assay layer name, this function fits msqrob models, constructs contrasts from
-#' the provided comparisons, runs hypothesis tests, and returns the QFeatures object with results.
-#' @param pe QFeatures object containing the assay to model
-#' @param params List of parameters; must include at least:
-#'   \describe{
-#'     \item{formula}{character or formula string used for msqrob modeling}
-#'     \item{comparisons}{character vector of coefficient names to test (e.g. c("condB-condA"))}
-#'   }
-#' @param layer Character; name/index of the assay layer in the QFeatures object to analyze
-#' @return A list with elements:
-#'   \item{status}{integer; 0 if successful, 1 if an error occurred}
-#'   \item{error}{character; error message when status is 1, otherwise an empty string}
-#'   \item{q_feat}{QFeatures object; the input QFeatures augmented with fitted models and hypothesis test results (NULL on error)}
-#' @importFrom SummarizedExperiment rowData assay colData
+#' @importFrom SummarizedExperiment rowData
 #' @importFrom msqrob2 msqrob getCoef makeContrast hypothesisTest
-#' @importFrom dplyr left_join select group_by summarise distinct n
 #' @importFrom stats as.formula
 #' @importFrom logger log_info
+#' @importFrom methods is
 
 
 msqrob_model <- function(pe, params, layer  ){
@@ -1295,8 +1391,7 @@ msqrob_model <- function(pe, params, layer  ){
   tryCatch( expr = {
 
     
-    log_info('Msqrob model ...')
-    
+   logger::log_info(paste('Fitting msqrob2 model on layer:', layer, '...'))    
     pe <- msqrob(object = pe, i = layer,
           formula = as.formula(params$formula),
 
@@ -1316,7 +1411,7 @@ msqrob_model <- function(pe, params, layer  ){
 
     getCoef(rowData(pe[[layer]])$msqrobModels[[1]])
 
-    log_info('Making contrast & testing ...')
+   logger::log_info('Generating contrast matrix and performing hypothesis testing...')
     L <- makeContrast(contrast_list, parameterNames = coef)
     pe <- hypothesisTest(object = pe, i = layer, contrast = L , overwrite=TRUE)
 
@@ -1330,41 +1425,79 @@ msqrob_model <- function(pe, params, layer  ){
 
 }
 
-
+#' @title Generate Interactive Volcano Plot with Plotly
+#' 
+#' @description 
+#' Creates a highly customized, interactive volcano plot for LiP-MS data. 
+#' The plot features multi-layered legends (Interest and Peptide Type), 
+#' RGBA transparency for non-significant points, and automated labeling 
+#' of the top 10 most significant protein groups.
+#'
+#' @param df A data frame containing statistical results (logFC, p-values, adjPval).
+#' @param params A list containing threshold parameters:
+#'   \itemize{
+#'     \item \code{adjPval_thr}: Adjusted P-value threshold (e.g., 0.05).
+#'     \item \code{FC_thr}: Log2 Fold Change threshold (e.g., 1).
+#'   }
+#' @param title Character. The title of the plot.
+#' @param annotation_fields Optional character vector of column names for tooltips.
+#' @param to_save Logical. If TRUE, skips tooltip generation to reduce object size.
+#' @param usage Logical. If TRUE, uses "usage" specific columns (e.g., usage_logFC).
+#'
+#' @return A list with two components:
+#' \itemize{
+#'   \item \code{volcano}: A plotly object.
+#'   \item \code{POI_l}: A character vector of Protein Groups of Interest.
+#' }
+#' 
+#' @export
+#'
+#' @import plotly
+#' @importFrom dplyr mutate select filter arrange pull sample_frac bind_rows .data any_of
+#' @importFrom ggsci pal_npg
+#' @importFrom stats setNames
+#' @importFrom grDevices col2rgb
+#' @importFrom rlang .data
+#'
 make_volcano_plot_plotly <- function(df, params, title, annotation_fields = NULL, to_save = FALSE, usage = TRUE) {
+  
   # Compose tooltip string based on requested annotation fields
   if (to_save == FALSE) {
     df <- df %>%
-        mutate(tooltip_text = paste0(
-          "Gene: ", Genes, "<br>",
-          "logFC: ", round(usage_logFC, 2), "<br>",
-          "adjPval: ", formatC(usage_adjPval, format="e", digits=2)
-        ))
+      dplyr::mutate(tooltip_text = paste0(
+        "Gene: ", .data$Genes, "<br>",
+        "logFC: ", round(.data$usage_logFC, 2), "<br>",
+        "adjPval: ", formatC(.data$usage_adjPval, format = "e", digits = 2)
+      ))
   }
   
   if (usage) { 
     df <- df %>% 
-      select(.data$usage_adjPval, .data$usage_pval, .data$usage_logFC, .data$Protein.Group, .data$Genes, .data$pep_type, any_of("tooltip_text")) %>%  
-      mutate(adjPval = usage_adjPval,
-             pval = usage_pval,
-             logFC = usage_logFC) 
+      dplyr::select(.data$usage_adjPval, .data$usage_pval, .data$usage_logFC, 
+                    .data$Protein.Group, .data$Genes, .data$pep_type, 
+                    dplyr::any_of("tooltip_text")) %>%  
+      dplyr::mutate(adjPval = .data$usage_adjPval,
+                    pval = .data$usage_pval,
+                    logFC = .data$usage_logFC) 
   } else {
-    df <- df %>% select(.data$adjPval, .data$pval, .data$logFC, .data$Protein.Group, .data$Genes, .data$pep_type, any_of("tooltip_text")) 
+    df <- df %>% 
+      dplyr::select(.data$adjPval, .data$pval, .data$logFC, .data$Protein.Group, 
+                    .data$Genes, .data$pep_type, dplyr::any_of("tooltip_text")) 
   }
   
   # Filter significant Protein Groups
   sigPG <- df %>%
-    filter(!is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
-    arrange(.data$pval) %>% 
-    pull(.data$Protein.Group)
+    dplyr::filter(!is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
+    dplyr::arrange(.data$pval) %>% 
+    dplyr::pull(.data$Protein.Group)
   
-  nPOI <- function(x) sapply(seq_along(x), function(i,x){length(unique(x[1:i]))}, x=x)
+  nPOI <- function(x) sapply(seq_along(x), function(i, x) { length(unique(x[1:i])) }, x = x)
   POI_Plot <- sigPG[nPOI(sigPG) <= 10] %>% unique()
   
   POI_Plot_Genes <- df %>%
-    select(.data$Protein.Group, .data$Genes) %>%
-    filter(Protein.Group %in% POI_Plot) %>%
-    pull(.data$Genes) %>% 
+    dplyr::select(.data$Protein.Group, .data$Genes) %>%
+    dplyr::filter(.data$Protein.Group %in% POI_Plot) %>%
+    dplyr::pull(.data$Genes) %>% 
     unique() 
   
   adjAlpha <- params$adjPval_thr * mean(df$adjPval <= params$adjPval_thr, na.rm = TRUE)
@@ -1372,129 +1505,112 @@ make_volcano_plot_plotly <- function(df, params, title, annotation_fields = NULL
   # Define Interest Levels
   levels_interest <- c(POI_Plot_Genes, "Relevant", "Not Relevant")
   
-  # 1. Build the Base Color Vector (from your pal_npg palette)
+  # 1. Build the Base Color Vector
   poi_cols <- ggsci::pal_npg()(length(POI_Plot)) 
   names(poi_cols) <- POI_Plot_Genes
   my_colors <- c(poi_cols, "Relevant" = "red", "Not Relevant" = "black")
   
   # 2. Build the Alpha Vector
-  my_alphas <- c(setNames(rep(1, length(POI_Plot)), POI_Plot_Genes), 
+  my_alphas <- c(stats::setNames(rep(1, length(POI_Plot)), POI_Plot_Genes), 
                  "Relevant" = 0.2, 
                  "Not Relevant" = 0.1)
   
   # 3. Combine Colors and Alphas into Plotly-friendly RGBA strings
   rgba_colors <- mapply(function(color, alpha) {
-    rgb_vals <- col2rgb(color)[, 1]
+    rgb_vals <- grDevices::col2rgb(color)[, 1]
     sprintf("rgba(%d, %d, %d, %f)", rgb_vals[1], rgb_vals[2], rgb_vals[3], alpha)
   }, my_colors[levels_interest], my_alphas[levels_interest])
   names(rgba_colors) <- levels_interest
   
-  # Mapping R pch (15-18) to Plotly symbols safely
+  # Mapping R pch to Plotly symbols
   pep_types <- unique(df$pep_type)
-   plotly_symbols <- c("square", "circle", "triangle-up", "diamond")[1:length(pep_types)]
-   names(plotly_symbols) <- pep_types
+  plotly_symbols <- c("square", "circle", "triangle-up", "diamond")[1:length(pep_types)]
+  names(plotly_symbols) <- pep_types
   
-
-
   # Assign relevance and interest
-df <- df %>% 
-    filter(!is.na(adjPval), !is.na(logFC)) %>%
-    mutate(
-      relevance = ifelse(adjPval <= params$adjPval_thr & abs(logFC) >= params$FC_thr, 
+  df <- df %>% 
+    dplyr::filter(!is.na(.data$adjPval), !is.na(.data$logFC)) %>%
+    dplyr::mutate(
+      relevance = ifelse(.data$adjPval <= params$adjPval_thr & abs(.data$logFC) >= params$FC_thr, 
                          "Relevant", "Not Relevant"),
-      interest = ifelse(Protein.Group %in% POI_Plot, 
-                        as.character(Genes), 
-                        as.character(relevance)) %>%
-                 factor(levels = c(POI_Plot_Genes, "Relevant", "Not Relevant")),
+      interest = ifelse(.data$Protein.Group %in% POI_Plot, 
+                        as.character(.data$Genes), 
+                        as.character(.data$relevance)) %>%
+        factor(levels = c(POI_Plot_Genes, "Relevant", "Not Relevant")),
       
       # PRE-CALCULATE RGBA COLOR 
       point_color = mapply(function(col, alph) {
-        rgb_vals <- col2rgb(col)[,1]
+        rgb_vals <- grDevices::col2rgb(col)[, 1]
         sprintf("rgba(%d, %d, %d, %f)", rgb_vals[1], rgb_vals[2], rgb_vals[3], alph)
-      }, my_colors[as.character(interest)], my_alphas[as.character(interest)]),
+      }, my_colors[as.character(.data$interest)], my_alphas[as.character(.data$interest)]),
       
       # PRE-CALCULATE SYMBOL 
-      point_symbol = plotly_symbols[as.character(pep_type)]
+      point_symbol = plotly_symbols[as.character(.data$pep_type)]
     ) %>%
-    arrange(desc(interest))
+    dplyr::arrange(desc(.data$interest))
   
-   
-  #saveRDS(df, 'vol_obj.rds')
-
-    ## subsample : 
-  df_sig <- df %>% filter(interest != "Not Relevant")
-
-# Sample only 10% of the noise
-  df_noise <- df %>% filter(interest == "Not Relevant") %>% dplyr::sample_frac(0.1)
-
-# Plot this instead
-  df_for_plot <- bind_rows(df_sig, df_noise)
+  # Subsample for performance
+  df_sig <- df %>% dplyr::filter(.data$interest != "Not Relevant")
+  df_noise <- df %>% dplyr::filter(.data$interest == "Not Relevant") %>% dplyr::sample_frac(0.1)
+  df_for_plot <- dplyr::bind_rows(df_sig, df_noise)
+  
   # ---------------------------------------------------------
   # GENERATE PLOTLY WITH SPLIT LEGENDS
   # ---------------------------------------------------------
-  
   hx <- -100
   hy <- -100
-
-  # Initialize empty plot
-  volcano_out <- plot_ly()
+  volcano_out <- plotly::plot_ly()
   
-  # 1. Add the actual data points but hide them from the legend
-  volcano_out <- volcano_out %>% add_trace(
-    data = df_for_plot,
-    x = df$logFC,
-    y =  -log10(df$pval),
+volcano_out <- volcano_out %>% plotly::add_trace(
+    data = df_for_plot,         # 1. Provide the specific data frame here
+    x = ~logFC,                 # 2. Use ~ to reference columns inside df_for_plot
+    y = ~-log10(pval),          # 3. Reference 'pval' inside df_for_plot
     type = 'scatter',
     mode = 'markers',
-   marker = list(
-        color = df$point_color, 
-        symbol = df$point_symbol,
-        size = 7, 
-        line = list(width = 0)
-      ),
-
-    text = df$tooltip_text,
+    marker = list(
+      color = ~point_color,     # 4. Use ~ for colors
+      symbol = ~point_symbol,   # 5. Use ~ for symbols
+      size = 7, 
+      line = list(width = 0)
+    ),
+    text = ~tooltip_text,       # 6. Use ~ for the tooltip
     hoverinfo = "text",
-    showlegend = FALSE # Hide merged default legend
+    showlegend = FALSE 
   )
   
- # 2. "Interest" Legend Header (Invisible trace, acts as a title)
-  volcano_out <- volcano_out %>% add_trace(
-
+  volcano_out <- volcano_out %>% plotly::add_trace(
     x = hx, y = hy, 
     type = 'scatter', mode = 'lines',
     name = '<b>Interest</b>',
-    line = list(width = 0, color = 'rgba(0,0,0,0)'), # Completely invisible marker
-    hoverinfo = "none",
-    showlegend = TRUE
-  )
-  
-  # 3. Interest Legend Items
-  present_interests <- intersect(levels_interest, unique(as.character(df$interest)))
-  for (int_name in present_interests) {
-    volcano_out <- volcano_out %>% add_trace(
-       x = hx, y = hy, 
-      type = 'scatter', mode = 'markers',
-      name = paste0("&nbsp;&nbsp;&nbsp;", int_name), # Indent the items slightly
-      marker = list(color = unname(rgba_colors[int_name]), size = 9, symbol = "circle"),
-      hoverinfo = "none",
-      showlegend = TRUE
-    )
-  }
- # 4. "Peptide type" Legend Header
-  volcano_out <- volcano_out %>% add_trace(
-    x = hx, y = hy, 
-    type = 'scatter', mode = 'lines',
-    name = '<br><b>Peptide type</b>', # <br> adds a blank line above it
     line = list(width = 0, color = 'rgba(0,0,0,0)'),
     hoverinfo = "none",
     showlegend = TRUE
   )
   
-  # 5. Peptide Type Legend Items
+  present_interests <- intersect(levels_interest, unique(as.character(df$interest)))
+  for (int_name in present_interests) {
+    volcano_out <- volcano_out %>% plotly::add_trace(
+      x = hx, y = hy, 
+      type = 'scatter', mode = 'markers',
+      name = paste0("&nbsp;&nbsp;&nbsp;", int_name),
+      marker = list(color = unname(rgba_colors[int_name]), size = 9, symbol = "circle"),
+      hoverinfo = "none",
+      showlegend = TRUE
+    )
+  }
+
+  volcano_out <- volcano_out %>% plotly::add_trace(
+    x = hx, y = hy, 
+    type = 'scatter', mode = 'lines',
+    name = '<br><b>Peptide type</b>',
+    line = list(width = 0, color = 'rgba(0,0,0,0)'),
+    hoverinfo = "none",
+    showlegend = TRUE
+  )
+  
   for (pt_name in pep_types) {
-    volcano_out <- volcano_out %>% add_trace(
-       x = hx, y = hy, 
+    volcano_out <- volcano_out %>% plotly::add_trace(
+      x = hx, y = hy, 
       type = 'scatter', mode = 'markers',
       name = paste0("&nbsp;&nbsp;&nbsp;", pt_name),
       marker = list(color = "grey50", size = 9, symbol = unname(plotly_symbols[pt_name])),
@@ -1503,13 +1619,12 @@ df <- df %>%
     )
   }
   
- x_min <- min(df$logFC, na.rm = TRUE) - 0.5
-x_max <- max(df$logFC, na.rm = TRUE) + 0.5
-y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
+  x_min <- min(df$logFC, na.rm = TRUE) - 0.5
+  x_max <- max(df$logFC, na.rm = TRUE) + 0.5
+  y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
 
-  # 6. Apply Layout
   volcano_out <- volcano_out %>%
-    layout(
+    plotly::layout(
       showlegend = TRUE, 
       legend = list(
         title = list(text = ""),
@@ -1518,14 +1633,13 @@ y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
         y = 1,
         xanchor = "left"
       ),
-      # LOCK THE AXES HERE
       xaxis = list(
         title = "Log<sub>2</sub>(Fold change)", 
-        range = c(x_min, x_max) # <--- Prevents zooming to -100
+        range = c(x_min, x_max)
       ),
       yaxis = list(
         title = "-Log<sub>10</sub>(P value)", 
-        range = c(0, y_max)           # <--- Prevents zooming to -100
+        range = c(0, y_max)
       ),
       plot_bgcolor = 'white',
       paper_bgcolor = 'white',
@@ -1536,18 +1650,16 @@ y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
       )
     )
   
- volcano_out$x$attrs <- lapply(volcano_out$x$attrs, function(trace) {
+  # Environment scrubbing for smaller object size/portability
+  volcano_out$x$attrs <- lapply(volcano_out$x$attrs, function(trace) {
     lapply(trace, function(attr_val) {
       if (inherits(attr_val, "formula")) {
-        environment(attr_val) <- .GlobalEnv # or emptyenv()
+        environment(attr_val) <- .GlobalEnv
       }
       return(attr_val)
     })
   })
 
-  # --- 2. Scrub the Data slot ---
-  # Native plotly stores the actual data in $x$data
-  # Sometimes internal pointers here also hold environments
   if (!is.null(volcano_out$x$data)) {
     volcano_out$x$data <- lapply(volcano_out$x$data, function(d) {
       attr(d, ".Environment") <- NULL
@@ -1555,15 +1667,10 @@ y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
     })
   }
 
-  # --- 3. The Nuclear Option (Deep Copy) ---
-  # This forces R to re-index the object without any parent references
   volcano_out <- unserialize(serialize(volcano_out, NULL))
-  
   
   return(list(volcano = volcano_out, POI_l = POI_Plot))
 }
-
-
 
 #' @author Andrea Argentini
 #' @title make_volcano_plot
@@ -1576,321 +1683,321 @@ y_max <- max(-log10(df$pval), na.rm = TRUE) + 0.5
 #' @param params List of parameters; expected entries include numeric FC_thr (fold-change threshold) and adjpval_thr (adjusted p-value threshold)
 #' @param title Character; title for the plot
 #' @param annotation_fields Character vector; column names to use in tooltip annotations (e.g. c("Protein.Names", "Genes"))
-#' @param poi_vis Character or numeric vector; points-of-interest used to determine colour palette length (e.g. vector of proteins/genes of interest)
 #' @param to_save Logical; if FALSE prepare interactive-style tooltip text (for saving as interactive plot), if TRUE produce a static plot with labeled significant points
-#' @return A ggplot object representing the volcano plot (interactive tooltip text is placed in a column named `tooltip_text` when to_save is FALSE)
-#' @importFrom ggplot2 ggplot  scale_alpha_manual scale_shape_manual aes theme_bw geom_point geom_vline geom_hline scale_colour_manual labs
+#' @param usage Logical; if TRUE, uses "usage_" prefixed columns (default TRUE)
+#' @return A list containing:
+#' \itemize{
+#'   \item \code{volcano}: A ggplot object representing the volcano plot.
+#'   \item \code{POI_l}: A character vector of the top 10 significant Protein Groups.
+#' }
+#' @importFrom ggplot2 ggplot scale_alpha_manual scale_shape_manual aes theme_bw geom_point geom_vline geom_hline scale_colour_manual labs scale_x_continuous guide_legend
 #' @importFrom ggsci pal_npg
 #' @importFrom ggrepel geom_text_repel
-#' @importFrom dplyr mutate select all_of filter distinct
-#' @importFrom plotly plot_ly add_lines layout
+#' @importFrom dplyr mutate select all_of filter distinct arrange pull desc
+#' @importFrom stats setNames
+#' @importFrom rlang .data
 
-
-make_volcano_plot <- function(df, params, title, annotation_fields = NULL,   to_save = FALSE, usage= TRUE  ) {
-  # Compose tooltip string based on requested annotation fields
+make_volcano_plot <- function(df, params, title, annotation_fields = NULL, to_save = FALSE, usage = TRUE) {
   
-  if (to_save== F ){
-    df <- df %>%
-      mutate(
-        tooltip_text = apply(
-          select(., all_of(annotation_fields)),
-          1,
-          function(row) {
-            paste(paste0(annotation_fields, ": ", row), collapse = "<br>")
-          })
-         )
-    }
-    if (usage){ 
-      df <- df %>% select(.data$usage_adjPval,.data$usage_pval, .data$usage_logFC, .data$Protein.Group, .data$Genes ,.data$pep_type) %>%  
-      mutate(adjPval = usage_adjPval,
-           pval = usage_pval,
-           logFC = usage_logFC) 
-    }else{
-           df <- df %>% select(.data$adjPval,.data$pval, .data$logFC, .data$Protein.Group, .data$Genes ,.data$pep_type) 
-    }
-    # plotly native code 
-   sigPG <- df |>
-          filter(.data$adjPval <= params$adjPval_thr) %>%
-          arrange(.data$pval) %>% 
-          pull(.data$Protein.Group)
-   
-  #  POIs <-df %>%
-  #         dplyr::filter(! is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
-  #         dplyr::pull(.data$Accession) %>%
-  #         unique()
-    nPOI <- function(x) sapply(seq_along(x), function(i,x){length(unique(x[1:i]))},x=x)
-    POI_Plot <- sigPG[nPOI(sigPG) <=10] |> unique()
+  # 1. Compose tooltip string
+  if (!to_save && !is.null(annotation_fields)) {
+    # Using a safer way to build tooltips without the '.' binding issue
+    df$tooltip_text <- apply(df[, annotation_fields, drop = FALSE], 1, function(row) {
+      paste(paste0(annotation_fields, ": ", row), collapse = "<br>")
+    })
+  }
 
-    POI_Plot_Genes <- df %>%
-      select(.data$Protein.Group, .data$Genes) %>%
-      filter(Protein.Group %in% POI_Plot) %>%
-      pull(.data$Genes) %>% 
-        unique() 
-    
-    adjAlpha <-  params$adjPval_thr * mean(df$adjPval<= params$adjPval_thr, na.rm = TRUE)
-  
-  # #
-  #  ggrepel::geom_text_repel(data = . %>% filter(interest != "Not Relevant"),
-  #                              aes(label = Genes,
-  #                                  colour = interest),
-  #                              size = 2,
-  #                              segment.size = 0.25,
-  #                              show.legend = F) +
-  
-   # dataset 
+  # 2. Handle Usage vs Abundance
+  if (usage) {
+    df <- df %>% 
+      dplyr::select(.data$usage_adjPval, .data$usage_pval, .data$usage_logFC, 
+                    .data$Protein.Group, .data$Genes, .data$pep_type) %>%
+      dplyr::mutate(adjPval = .data$usage_adjPval,
+                    pval = .data$usage_pval,
+                    logFC = .data$usage_logFC)
+  } else {
+    df <- df %>% 
+      dplyr::select(.data$adjPval, .data$pval, .data$logFC, 
+                    .data$Protein.Group, .data$Genes, .data$pep_type)
+  }
 
+  # 3. Logic for POIs
+  sigPG <- df %>%
+    dplyr::filter(.data$adjPval <= params$adjPval_thr) %>%
+    dplyr::arrange(.data$pval) %>%
+    dplyr::pull(.data$Protein.Group)
 
-  levels_interest <- c(POI_Plot_Genes, "Relevant", "Not Relevant")
+  nPOI <- function(x) sapply(seq_along(x), function(i, x) { length(unique(x[1:i])) }, x = x)
+  POI_Plot <- unique(sigPG[nPOI(sigPG) <= 10])
 
-  # 2. Build the Color Palette Vector
-  # We use named vectors: this ensures "Relevant" is ALWAYS red
-  poi_cols <- pal_npg()(length(POI_Plot))
+  POI_Plot_Genes <- df %>%
+    dplyr::select(.data$Protein.Group, .data$Genes) %>%
+    dplyr::filter(.data$Protein.Group %in% POI_Plot) %>%
+    dplyr::pull(.data$Genes) %>%
+    unique()
+
+  adjAlpha <- params$adjPval_thr * mean(df$adjPval <= params$adjPval_thr, na.rm = TRUE)
+
+  # 4. Color and Alpha Palettes
+  poi_cols <- ggsci::pal_npg()(length(POI_Plot_Genes))
   names(poi_cols) <- POI_Plot_Genes
 
-  # Combine into a single named vector
   my_colors <- c(poi_cols, "Relevant" = "red", "Not Relevant" = "black")
-  # 3. Build the Alpha Vector
-  my_alphas <- c(setNames(rep(1, length(POI_Plot)), POI_Plot_Genes), 
-                "Relevant" = 0.2, 
-                "Not Relevant" = 0.1)
-  df <- df %>%  filter(!is.na(.data$adjPval)) %>% 
-  mutate(relevance = ifelse(.data$adjPval<= params$adjPval_thr & abs(.data$logFC)>=params$FC_thr, "Relevant", "Not Relevant"),
-         interest = ifelse(.data$Protein.Group %in% POI_Plot, .data$Genes, .data$relevance) %>%
-           factor(levels=c(POI_Plot_Genes,"Relevant","Not Relevant"))) %>%
-    arrange(desc(.data$interest)) 
+  
+  my_alphas <- c(stats::setNames(rep(1, length(POI_Plot_Genes)), POI_Plot_Genes), 
+                 "Relevant" = 0.2, 
+                 "Not Relevant" = 0.1)
 
-  plot_df <- df %>%
-    filter(!is.na(adjPval)) %>%
-    select(logFC, pval, interest, pep_type)
+  # 5. Build Plot Data
+  df <- df %>%
+    dplyr::filter(!is.na(.data$adjPval)) %>%
+    dplyr::mutate(
+      relevance = ifelse(.data$adjPval <= params$adjPval_thr & abs(.data$logFC) >= params$FC_thr, 
+                         "Relevant", "Not Relevant"),
+      interest = ifelse(.data$Protein.Group %in% POI_Plot, .data$Genes, .data$relevance) %>%
+                 factor(levels = c(POI_Plot_Genes, "Relevant", "Not Relevant"))
+    ) %>%
+    dplyr::arrange(dplyr::desc(.data$interest))
 
-  volcano_out <- ggplot(plot_df, 
-          aes(x = logFC,
-              y = -log10(pval))) +
-      geom_hline(yintercept = -log10(adjAlpha)) +
-      geom_vline(xintercept = c(-1, 1)) +
-      geom_point(size = 1,
-                 aes(colour = interest,
-                     alpha = interest,
-                     shape = pep_type)) +
-      # Use a named vector or direct values instead of the .data subset
-      scale_colour_manual(values = my_colors) + 
-      scale_alpha_manual(values = my_alphas) +
-      scale_shape_manual(values = c(15:18),
-                     guide = guide_legend(override.aes = list(size = 3))) + 
-      scale_x_continuous(breaks = seq(-10, 10, by = 2)) + # seq is safer than -100:100*2
-      labs(title = paste0("Differentially ", ifelse(usage, "used", "abundant"), " LiP precursors"),
-           x = expression(Log[2](Fold~change)),
-           y = expression(-Log[10](P~value)),
-           colour = "Interest",
-           alpha = "Interest",
-           shape = "Peptide type") +
-      theme_bw()
+  # 6. Generate Plot
+  volcano_out <- ggplot2::ggplot(df, ggplot2::aes(x = .data$logFC, y = -log10(.data$pval))) +
+    ggplot2::geom_hline(yintercept = -log10(adjAlpha)) +
+    ggplot2::geom_vline(xintercept = c(-1, 1)) +
+    ggplot2::geom_point(
+      size = 1,
+      ggplot2::aes(
+        colour = .data$interest,
+        alpha = .data$interest,
+        shape = .data$pep_type
+      )
+    ) +
+    ggplot2::scale_colour_manual(values = my_colors) +
+    ggplot2::scale_alpha_manual(values = my_alphas) +
+    ggplot2::scale_shape_manual(
+      values = c(15:18),
+      guide = ggplot2::guide_legend(override.aes = list(size = 3))
+    ) +
+    ggplot2::scale_x_continuous(breaks = seq(-10, 10, by = 2)) +
+    ggplot2::labs(
+      title = paste0("Differentially ", ifelse(usage, "used", "abundant"), " LiP precursors"),
+      x = expression(Log[2](Fold ~ change)),
+      y = expression(-Log[10](P ~ value)),
+      colour = "Interest",
+      alpha = "Interest",
+      shape = "Peptide type"
+    ) +
+    ggplot2::theme_bw()
+
   volcano_out$plot_env <- emptyenv()
-  #log_info('Size ggplot (inside make) ')
-  #log_info(sprintf("Size ggplot: %.2f MB", as.numeric(obj_size(volcano_out)) / 1024^2))
 
-
-  return(list ( volcano = volcano_out,  POI_l = POI_Plot ))
-
+  return(list(volcano = volcano_out, POI_l = POI_Plot))
 }
 
 
-
 #' @author Andrea Argentini
-#' @title plot_barcode
-#' @description Generate a barcode-style plot for one or more proteins of interest (POIs). The function summarizes precursor-level signals, annotates significance and peptide types, computes coverage and directionality, and delegates plotting to make_barplot.
-#' @param POI Character vector of protein accessions (Uniprot IDs) to plot
-#' @param input Data frame or tibble with precursor-level annotations and quantitative columns (must include Accession, Precursor.Id, Drug, normPQ, Proteotypic, total_repeats, coverage, Stripped.Sequence, repeat_nr)
-#' @param group_column Unquoted column name (tidy evaluated) indicating the grouping variable in input (e.g., Drug)
-#' @param DE_result Data frame of differential expression results (must contain precursor.Id, logFC, pval, adjPval)
-#' @param indicate_direction Logical; if TRUE annotate significance with directionality (default FALSE)
-#' @return A plotting object (the result returned by make_barplot), typically a ggplot or list containing plot elements for the barcode visualization
-#' @importFrom dplyr filter distinct group_by mutate left_join ungroup arrange pull
+#' @title Plot Peptide Barcode for a Protein of Interest
+#' @description 
+#' Generates a barcode-style visualization for a specific protein. It processes 
+#' differential expression results, calculates peptide coordinates (including 
+#' handling of repeating sequences), determines significance based on both 
+#' p-values and data completeness (missing values), and calls \code{make_barplot}.
+#' 
+#' @param POI Character. The protein accession (e.g., Uniprot ID) to visualize.
+#' @param se A \code{SummarizedExperiment} or \code{QFeatures} object.
+#' @param group_column Character. The column name in \code{colData(se)} used for grouping.
+#' @param DE_result Data frame of differential expression results.
+#' @param indicate_direction Logical. Currently a placeholder for directionality logic.
+#' @param prot_seq Data frame containing \code{Accession} and \code{Protein.Sequence}.
+#' @param usage Logical. If TRUE, uses \code{usage_} columns from DE results.
+#' @param directionality Logical. If TRUE, labels significance with "Up" or "Down" strings.
+#' @param expand Logical. Passed to \code{make_barplot} for faceting.
+#' @param params List. Contains \code{adjPval_thr} and other thresholds.
+#' 
+#' @return A list containing the ggplot object (\code{gg}).
+#' 
+#' @importFrom dplyr filter distinct group_by mutate left_join ungroup arrange pull select join_by
 #' @importFrom tidyr uncount
-#' @importFrom stats setNames
+#' @importFrom stats setNames model.matrix
+#' @importFrom SummarizedExperiment colData assay
+#' @importFrom stringr str_count str_locate_all
+#' @importFrom rlang .data
 
 
+plot_barcode <- function(POI, se, group_column = 'Treatment', DE_result, 
+                         indicate_direction = FALSE, 
+                         prot_seq,
+                         usage = TRUE, directionality = FALSE, expand = FALSE, params) {
 
-plot_barcode <- function(POI, se, group_column= 'Treatment', DE_result, 
-                              indicate_direction = F, 
-                              prot_seq,
-                            usage=TRUE, directionality = FALSE, expand = FALSE, params){
-  
+  grouping <- SummarizedExperiment::colData(se)[[group_column]]
+  groups <- unique(grouping)
 
-grouping <- colData(se)[[group_column]]
-groups <- unique(grouping)
+  # 1. Define Color Mappings
+  signif_names <- c("Not Significant", paste(groups[1], "Missing"), paste(groups[2], "Missing"),
+                    paste(groups[1], "Up"), paste(groups[2], "Up"), "Missing", "Significant")
 
-signif_names <- c(
-  "Not Significant",
-  paste(groups[1], "Missing"), # verplaatst zodat significante bovenop komen
-  paste(groups[2], "Missing"),
-  paste(groups[1], "Up"),
-  paste(groups[2], "Up"),
-  "Missing",
-  "Significant"
-)
+  signif_colours <- c("grey40", "yellow2", "lightskyblue", "lightslateblue", "orange2", "blue", "orange")
+  colour_mapping_significance <- stats::setNames(signif_colours, signif_names)
 
-signif_colours <- c(
-  "grey40",
-  "yellow2", # ook mee verplaatst door hierboven
-  "lightskyblue",
-  "lightslateblue",
-  "orange2",
-  "blue",
-  "orange"
-)  
- 
-colour_mapping_significance <- setNames(signif_colours, signif_names)
+  colour_mapping_type <- c("Non-proteotypic, internally repeating" = "green", 
+                           "Non-proteotypic" = "red", 
+                           "Internally repeating" = "purple", 
+                           "Proteotypic" = "grey80")
 
-colour_mapping_type <- c("Non-proteotypic, internally repeating" = "green", 
-                    "Non-proteotypic" = "red", 
-                    "Internally repeating" = "purple", 
-                    "Proteotypic" = "grey80")  
-
-  if (usage) 
-  { DE_result <- DE_result %>% select ( .data$Precursor.Id, .data$usage_adjPval,.data$usage_pval, .data$usage_logFC, .data$Protein.Group, .data$Genes, .data$length ,.data$pep_type,.data$Stripped.Sequence, .data$Proteotypic)  %>% mutate(pval = usage_pval, 
-         adjPval = usage_adjPval,
-         effectSize = usage)
+  # 2. Select and Rename Columns
+  if (usage) {
+    DE_result <- DE_result %>% 
+      dplyr::select(.data$Precursor.Id, .data$usage_adjPval, .data$usage_pval, .data$usage_logFC, 
+                    .data$Protein.Group, .data$Genes, .data$length, .data$pep_type, 
+                    .data$Stripped.Sequence, .data$Proteotypic) %>% 
+      dplyr::mutate(pval = .data$usage_pval, adjPval = .data$usage_adjPval, effectSize = .data$usage_logFC)
   } else {
-    DE_result <-  DE_result <- DE_result %>% select(.data$adjPval,.data$pval, .data$logFC, .data$Protein.Group, .data$Genes ,.data$pep_type) %>% mutate(effectSize = logFC)
+    DE_result <- DE_result %>% 
+      dplyr::select(.data$adjPval, .data$pval, .data$logFC, .data$Protein.Group, .data$Genes, .data$pep_type,
+                    .data$Precursor.Id, .data$length, .data$Stripped.Sequence, .data$Proteotypic) %>% 
+      dplyr::mutate(effectSize = .data$logFC)
   }
-## to be checked 
- DE_result <- DE_result %>%
-    filter(grepl(POI, Protein.Group)) %>%
-    select(.data$pval, .data$adjPval,.data$effectSize,.data$Stripped.Sequence, .data$Protein.Group, .data$Proteotypic, .data$Precursor.Id, .data$length, .data$Genes) %>%
-   left_join(prot_seq %>% select(Accession, Protein.Sequence), join_by(Protein.Group == Accession) ) %>% 
-    mutate( total_repeats = str_count(Protein.Sequence, Stripped.Sequence)) %>%
-    uncount(total_repeats, .remove=FALSE) %>%
-    group_by(Stripped.Sequence)%>%
-    mutate(repeat_nr = 1:max(total_repeats),
-           start = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 1],
-           end = str_locate_all(Protein.Sequence[1], Stripped.Sequence[1])[[1]][repeat_nr, 2],
-           pep_type = classify_trypticity(
-             peptide = Stripped.Sequence[1], 
-             protein = Protein.Sequence[1], 
-             start_pos = start)) %>%
-    mutate(tier = match(Precursor.Id, sort(unique(Precursor.Id))), 
-         max_tier = max(tier)) %>%
-    ungroup() %>%
-    mutate(
-    type = ifelse(Proteotypic==0 & total_repeats>1, 
-                  "Non-proteotypic, internally repeating",
-                  ifelse(total_repeats>1, 
-                         "Internally repeating",
-                         ifelse(Proteotypic==0, 
-                                "Non-proteotypic", 
-                                "Proteotypic"))) %>%
-      factor(levels = c("Non-proteotypic, internally repeating", 
-                        "Non-proteotypic",
-                        "Internally repeating",
-                        "Proteotypic"))
-    ) # 
-  
-completeness <- assay(se)[DE_result$Precursor.Id,] %>%
-  is.na() %*% model.matrix(~0+grouping) 
-DE_result <- DE_result %>% 
-  mutate(
-    directionality = directionality,
-    missing = 
-      (completeness == matrix(
-        table(grouping), 
-        byrow=TRUE,
-        nrow=nrow(completeness),
-        ncol=ncol(completeness))) |> 
-      apply(1, function(x){
-        h <- which(x) |> names() |> paste0() |> gsub(pattern="grouping",replacement="")
-        return(ifelse(sum(x)==0, NA, h))
-        }), 
-  significance = 
-    ifelse(
-    !is.na(missing),
-    ifelse(directionality,
-           paste0(missing," Missing"),
-           "Missing"),
-    ifelse(
-      adjPval < params$adjPval_thr & !is.na(adjPval),
-      ifelse(directionality,
-             ifelse(effectSize < 0 & !is.na(effectSize),
-                    paste0(groups[1]," Up"),
-                    paste0(groups[2]," Up")),
-             "Significant"),
-      "Not Significant")) |> factor(levels=signif_names),
-    section = ifelse(significance == "Not Significant",
-                     "Not Significant",
-                          ifelse(!is.na(missing),
-                                 "Missing",
-                                 "Significant")) |> 
-  factor(levels = c("Not Significant", "Significant", "Missing"))
-  ) %>% 
-  filter(!(significance=="Not Significant"&is.na(adjPval))) %>%
- arrange(significance, type)  
 
-  barplot_obj <- make_barplot( df = DE_result, POI_ = POI, colour_mapping_significance, colour_mapping_type, expand)
- 
-  return (list(
-        gg = barplot_obj
-        ##colour_mapping_significance = colour_mapping_significance,
-        #colour_mapping_type = colour_mapping_type
-      ) )
+  # 3. Coordinate Calculation Logic
+  DE_result <- DE_result %>%
+    dplyr::filter(grepl(POI, .data$Protein.Group)) %>%
+    dplyr::left_join(prot_seq %>% dplyr::select(.data$Accession, .data$Protein.Sequence), 
+                     by = dplyr::join_by( Protein.Group == Accession)) %>% 
+    dplyr::mutate(total_repeats = stringr::str_count(.data$Protein.Sequence, .data$Stripped.Sequence)) %>%
+    tidyr::uncount(.data$total_repeats, .remove = FALSE) %>%
+    dplyr::group_by(.data$Precursor.Id) %>%
+    dplyr::mutate(
+      repeat_nr = 1:dplyr::n(),
+      start = stringr::str_locate_all(.data$Protein.Sequence[1], .data$Stripped.Sequence[1])[[1]][.data$repeat_nr, 1],
+      end = stringr::str_locate_all(.data$Protein.Sequence[1], .data$Stripped.Sequence[1])[[1]][.data$repeat_nr, 2]
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(
+      type = dplyr::case_when(
+        .data$Proteotypic == 0 & .data$total_repeats > 1 ~ "Non-proteotypic, internally repeating",
+        .data$total_repeats > 1 ~ "Internally repeating",
+        .data$Proteotypic == 0 ~ "Non-proteotypic",
+        TRUE ~ "Proteotypic"
+      ) %>% factor(levels = names(colour_mapping_type)),
+      tier = match(.data$Precursor.Id, sort(unique(.data$Precursor.Id))),
+      max_tier = max(.data$tier)
+    )
+
+  # 4. Completeness / Missing Values Logic
+  # Use %*% for matrix multiplication and model.matrix for group counts
+  comp_data <- SummarizedExperiment::assay(se)[DE_result$Precursor.Id, , drop=FALSE]
+  completeness <- is.na(comp_data) %*% stats::model.matrix(~ 0 + grouping)
+  
+  group_counts <- as.numeric(table(grouping))
+  
+  DE_result <- DE_result %>% 
+    dplyr::mutate(
+      missing = apply(completeness == matrix(group_counts, byrow = TRUE, 
+                                            nrow = nrow(completeness), 
+                                            ncol = ncol(completeness)), 1, function(x) {
+        h <- names(which(x)) %>% gsub(pattern = "grouping", replacement = "")
+        return(if(length(h) == 0) NA else h[1])
+      }),
+      significance = dplyr::case_when(
+        !is.na(.data$missing) ~ if(directionality) paste0(.data$missing, " Missing") else "Missing",
+        .data$adjPval < params$adjPval_thr & !is.na(.data$adjPval) ~ 
+           if(directionality) ifelse(.data$effectSize < 0, paste0(groups[1], " Up"), paste0(groups[2], " Up")) else "Significant",
+        TRUE ~ "Not Significant"
+      ) %>% factor(levels = signif_names),
+      section = dplyr::case_when(
+        .data$significance == "Not Significant" ~ "Not Significant",
+        !is.na(.data$missing) ~ "Missing",
+        TRUE ~ "Significant"
+      ) %>% factor(levels = c("Not Significant", "Significant", "Missing"))
+    ) %>% 
+    dplyr::filter(!(.data$significance == "Not Significant" & is.na(.data$adjPval))) %>%
+    dplyr::arrange(.data$significance, .data$type)
+
+  # 5. Delegate to make_barplot
+  barplot_obj <- make_barplot(df = DE_result, POI_ = POI, colour_mapping_significance, colour_mapping_type, expand)
+  
+  return(list(gg = barplot_obj))
 }
 
 #' @author Andrea Argentini
-#' @title make_barplot
-#' @description ggplot2 code for the barcode plot. Draws peptide rectangles along protein sequence coordinates, colours by significance and proteotypicity, and returns a ggplot object ready for display or saving.
-#' @param df Data frame prepared for plotting (must contain start, end, tier, max_tier, length, coverage, significance, type)
-#' @param POI_ Character; protein accession or identifier used in the plot title
-#' @param colour_mapping_significance Named character vector mapping significance categories to fill colours
-#' @param colour_mapping_type Named character vector mapping peptide type categories to outline colours
-#' @return A ggplot object representing the barcode plot
-#' @importFrom ggplot2 ggplot aes geom_rect scale_x_continuous scale_y_continuous labs scale_fill_manual scale_colour_manual theme_bw theme element_blank element_rect element_text guide_legend
+#' @title Create Peptide Barcode Plot
+#' @description 
+#' Generates a barcode-style plot using ggplot2. Draws peptide rectangles along 
+#' protein sequence coordinates, colors by significance and proteotypicity, 
+#' and handles faceting by peptide type and section.
+#' 
+#' @param df Data frame prepared for plotting (must contain start, end, tier, max_tier, length, Genes, significance, type).
+#' @param POI_ Character; protein accession or identifier used in the plot title.
+#' @param colour_mapping_significance Named character vector mapping significance categories to fill colors.
+#' @param colour_mapping_type Named character vector mapping peptide type categories to outline colors.
+#' @param expand Logical. If TRUE, facets the plot by \code{pep_type} and \code{section}.
+#' 
+#' @return A \code{ggplot} object.
+#' 
+#' @importFrom ggplot2 ggplot aes geom_rect scale_x_continuous scale_y_continuous labs scale_fill_manual scale_colour_manual theme_bw theme element_blank element_rect element_text guide_legend facet_grid
+#' @importFrom rlang .data
 
 # colour = type
-make_barplot <- function ( df, POI_ , colour_mapping_significance, colour_mapping_type,expand ){
- 
-   plot <- 
-  ggplot(df, aes(x=start, y = 1)) +
-    geom_rect(aes(xmin = start,
-                  xmax = end,
-                  ymin = (1/max_tier)*(tier-1),
-                  ymax = (1/max_tier)*(tier),
-                  fill = significance,
-                  colour = type
-                  ),
-              linewidth = 0.2) +
-    scale_x_continuous(breaks = c(0:1000*10^(floor(log10(df$length[1]-1)))), 
-                       limits = c(0,df$length[1]),
-                       expand = c(0,0)
-                       ) +
-    scale_y_continuous(expand = c(0,0)) +
-    labs(title = "Significant changes by precursor",
-         subtitle = paste(df$Genes[1],"/",POI_,": ",
-                          round(calculate_coverage(
-                            df$start,
-                            df$end,
-                            df$length[1])*100,
-                            1), "% coverage", sep = ""),
-         x = "Residue",
-         y = "Precursors",
-         fill = "Significance",
-         colour = "Proteotypicity") +
+make_barplot <- function(df, POI_, colour_mapping_significance, colour_mapping_type, expand) {
+  
+  # Note: ensure calculate_coverage is available in your package namespace
+  
+  plot <- ggplot(df, aes(x = .data$start, y = 1)) +
+    geom_rect(
+      aes(
+        xmin = .data$start,
+        xmax = .data$end,
+        ymin = (1 / .data$max_tier) * (.data$tier - 1),
+        ymax = (1 / .data$max_tier) * (.data$tier),
+        fill = .data$significance,
+        colour = .data$type
+      ),
+      linewidth = 0.2
+    ) +
+    scale_x_continuous(
+      breaks = seq(0, 1000 * 10^(floor(log10(df$length[1] - 1))), by = 100), 
+      limits = c(0, df$length[1]),
+      expand = c(0, 0)
+    ) +
+    scale_y_continuous(expand = c(0, 0)) +
+    labs(
+      title = "Significant changes by precursor",
+      subtitle = paste0(
+        df$Genes[1], "/", POI_, ": ",
+        round(calculate_coverage(
+          df$start,
+          df$end,
+          df$length[1]
+        ) * 100, 1), 
+        "% coverage"
+      ),
+      x = "Residue",
+      y = "Precursors",
+      fill = "Significance",
+      colour = "Proteotypicity"
+    ) +
     scale_fill_manual(values = colour_mapping_significance) +
-    scale_colour_manual(values = colour_mapping_type, 
-                        guide = guide_legend(override.aes = list(fill = "transparent"))) +
+    scale_colour_manual(
+      values = colour_mapping_type, 
+      guide = guide_legend(override.aes = list(fill = "transparent"))
+    ) +
     theme_bw() +
-    theme(panel.grid = element_blank(),
-          axis.line.y = element_blank(),
-          axis.text.y = element_blank(),
-          # axis.title.y = element_blank(),
-          axis.ticks.y = element_blank(),
-          # axis.title.y = element_blank(),
-          # panel.border = element_blank(),
-          panel.background = element_rect(fill = "white"),
-          strip.background = element_rect(fill = "white"),
-          strip.text = element_text(face = "bold"))
+    theme(
+      panel.grid = element_blank(),
+      axis.line.y = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.background = element_rect(fill = "white"),
+      strip.background = element_rect(fill = "white"),
+      strip.text = element_text(face = "bold")
+    )
 
-if (expand) return(plot + facet_grid(pep_type~section)) else return(plot)
+  if (expand) {
+    # Using explicit namespacing for facet_grid to ensure it's found
+    return(plot + ggplot2::facet_grid(.data$pep_type ~ .data$section))
+  } else {
+    return(plot)
+  }
 }
-
 
 
 
@@ -1910,7 +2017,7 @@ check_dependencies = function(required_packages = required_packages){
       # require returns TRUE invisibly if it was able to load package
       if(! require(i, character.only = TRUE, quietly = TRUE)){
         #  If package was not able to be loaded then re-install
-        tryCatch(install.packages(i , dependencies = TRUE), error = function(e) { NULL })
+        tryCatch(utils::install.packages(i , dependencies = TRUE), error = function(e) { NULL })
         tryCatch(BiocManager::install(i), error = function(e) { NULL })
         require(i, character.only = TRUE, quietly = TRUE)
       }

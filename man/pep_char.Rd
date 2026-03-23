@@ -2,42 +2,21 @@
 % Please edit documentation in R/utils_function.R
 \name{pep_char}
 \alias{pep_char}
-\title{pep_char}
+\title{Characterize Peptide Properties and Mapping}
 \usage{
 pep_char(table, prot_seq = "Protein.Sequence", pep_seq = "Stripped.Sequence")
 }
 \arguments{
-\item{table}{A data frame or tibble containing peptide and protein sequences.}
+\item{table}{A data frame or tibble.}
 
-\item{prot_seq}{A character string specifying the column name for the 
-full protein sequence. Default is `"Protein.Sequence"`.}
+\item{prot_seq}{Character. Column name for protein sequence (default "Protein.Sequence").}
 
-\item{pep_seq}{A character string specifying the column name for the 
-stripped peptide sequence. Default is `"Stripped.Sequence"`.}
+\item{pep_seq}{Character. Column name for stripped peptide sequence (default "Stripped.Sequence").}
 }
 \value{
-A data frame with the following additional columns:
-\itemize{
-  \item \code{missed_cleavages}: Count of internal [RK] not followed by P.
-  \item \code{total_repeats}: Number of times the peptide occurs in the protein.
-  \item \code{start}: Starting position of the first occurrence.
-  \item \code{end}: Ending position of the first occurrence.
-  \item \code{pep_type}: Trypticity classification (Tryptic, Semi, Non, or Ambiguous).
-  \item \code{AA_last}: The C-terminal amino acid of the peptide.
-}
+A data frame with additional columns for sequence properties.
 }
 \description{
-This function annotates a data frame of peptides with biochemical and 
-positional properties. Finally, we define a function for adding and 
-adjusting data for the features to:
-\enumerate{
-  \item Define missed_cleavages
-  \item Calculate how many times precursor is repeated in protein
-  \item Calculate start and end position in a protein
-  \item Define peptide type
-  \item Extract last amino acid
-}
-}
-\details{
-Characterize Peptide Properties and Mapping
+Annotates a data frame of peptides with biochemical and positional properties 
+such as missed cleavages, mapping positions, and trypticity.
 }

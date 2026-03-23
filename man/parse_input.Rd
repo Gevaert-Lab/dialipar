@@ -2,30 +2,25 @@
 % Please edit documentation in R/utils_function.R
 \name{parse_input}
 \alias{parse_input}
-\title{parse_input}
+\title{Parse Proteomics Input and Design Files}
 \usage{
-parse_input(input_parquet_tc, input_parquet_lip, dual, input_design)
+parse_input(input_parquet_tc, input_parquet_lip, input_design)
 }
 \arguments{
-\item{input_parquet_tc}{Path to the TC parquet file (used when dual = TRUE)}
+\item{input_parquet_tc}{Path to the TC parquet file (optional).}
 
-\item{input_parquet_lip}{Path to the LiP parquet file (or the single combined parquet when dual = FALSE)}
+\item{input_parquet_lip}{Path to the LiP parquet file.}
 
-\item{dual}{Logical; TRUE if TC and LiP are in separate parquet files, FALSE if both are in one file}
-
-\item{input_design}{Path to the experiment design file (tsv/arrow readable)}
+\item{input_design}{Path to the experiment design file (tsv).}
 }
 \value{
-A list with elements:
-  \item{status}{integer; 0 if successful, 1 if an error occurred}
-  \item{error}{character; error message when status is 1, otherwise an empty string}
-  \item{lip}{data.frame or tibble; LiP report data (NULL on error)}
-  \item{tc}{data.frame or tibble; TC report data or NULL if not provided}
-  \item{design}{data.frame or tibble; parsed design file}
-  \item{diann_flag}{logical; TRUE if the report looks like DIA‑NN (contains a "Run" column)}
+A list containing status, error message, parsed reports (lip, tc), 
+  the design data frame, and a diann_flag.
 }
 \description{
-Read and parse input parquet file(s) and the experiment design file. Detects whether reports are in DIA‑NN format, reads TC and/or LiP reports (from one or two parquet files depending on 'dual'), validates the design using check_design_requirement, and returns parsed reports along with the design and a diann_flag.
+Reads and parses input parquet file(s) and the experiment design file. 
+Detects whether reports are in DIA-NN or Spectronaut format, performs 
+column renaming to a unified standard, and validates the design file.
 }
 \author{
 Andrea Argentini

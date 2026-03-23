@@ -294,6 +294,7 @@ merge_default_parameters <- function  ( params_int  ){
 #' @importFrom utils modifyList
 #' @importFrom withr with_dir
 #' @importFrom assertthat assert_that is.string
+#' @importFrom lobstr obj_size
 
 render_dialipa_report <- function(params_report, template, report_folder, report_filename ) {
 
@@ -326,7 +327,6 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$qc_data)) / 1024^2))
   log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$mds)) / 1024^2))
   log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$res_DE)) / 1024^2))
-  #browser()
   render_quarto_template( data_list = data_$result,
     template_name = 'Template_WIP.qmd',
     report_fld = report_folder, 

@@ -24,5 +24,5 @@ peptide intensities. This step adjusts for changes in total protein expression
 to isolate changes in protein conformation or accessibility.
 }
 \details{
-Compute LiP-MS Usage (Accessibility)
+Compute LiP-MS Usage
 }
