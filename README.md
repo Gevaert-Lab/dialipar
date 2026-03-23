@@ -13,6 +13,8 @@ With a few simple steps you can:
 
 Whether you’re new to LiP‑MS or a seasoned proteomics researcher, dialipar makes your workflow smoother, faster, and more reproducible.
 
+DiaLipa data analysis is described in details in  [C. Van Leene at. al.](https://pubs.acs.org/doi/full/10.1021/acs.analchem.5c07014)
+
 ---
 
 ## 🛠️ Requirements
@@ -20,18 +22,16 @@ Whether you’re new to LiP‑MS or a seasoned proteomics researcher, dialipar m
 1. **R**>= 4.4.0
 2. **Install Bioconductor**:
    - install.packages("BiocManager")
-3. **Install PhantomJS for web screenshots** (used by webshot):
-   - webshot::install_phantomjs()
-4. **Install devtools**:
+3. **Install devtools**:
    - install.packages("devtools")
-5. **Install Quarto** (version 1.6.43 or more):
+4. **Install Quarto** (version 1.6.43 or more):
    - Follow the instructions at https://quarto.org/docs/download/
 5. **Install Bioconductor dependencies**   
     ``` r 
         if (!requireNamespace("BiocManager", quietly = TRUE))
             install.packages("BiocManager")
  
-        BiocManager::install(c("QFeatures", "SummarizedExperiment", "MsCoreUtils", "msqrob2"))
+        BiocManager::install(c("QFeatures", "SummarizedExperiment", "MsCoreUtils", "msqrob2","scater"))
    ```
 6. **Install CRAN dependencies**   
     ``` r 
@@ -74,15 +74,16 @@ Specify the template name via the `template_file` parameter in the `render_diali
 
 ##  📦 Data Availability
 
-Lip Ms experiment processed with DIA-NN and Spectronaut can be found in [MassIVE](<ftp://MSV000099740@massive-ftp.ucsd.edu/>). The raw files were searched with:
+LipMS experiment processed with DIA-NN and Spectronaut can be found in [MassIVE](<ftp://MSV000099740@massive-ftp.ucsd.edu/>). However, The raw files were searched with the laster version opf the software are available also here for download :
 
--  [DIA-NN v.2.3 library free](/quant/Analysis_output/Workflows/library-free_diann_v2-3/input) (predicted spectral library). TC and LiP runs are included in only one parquet file. 
--  [Spectronaut v.19 empirical spectral library ](/quant/Analysis_output/Workflows/empirical_spectronaut_v19/input) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.
--  [Spectronaut v.19 library free](/quant/Analysis_output/Workflows/library-free_spectronaut_v19) (predicted spectral library). TC and LiP runs are included in only one parquet file.
+-  [DIA-NN v.2.3 library free]  [LF_DIANN_v2-3](https://cloud.cmb.ugent.be/index.php/s/eRDy32eFm7GsRY2) (predicted spectral library). TC and LiP runs are included in only one parquet file. 
+
+-  [DIA-NN v.2.3 empirical library]  [empirical_DIANN_v2-3](https://cloud.cmb.ugent.be/index.php/s/eRDy32eFm7GsRY2) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.
+-  [Spectronaut v.20.3 empirical spectral library ]  [empirical_spectronaut_v20-3](https://cloud.cmb.ugent.be/index.php/s/eRDy32eFm7GsRY2) with empirical DDA based spectral library. TC and Lip runs are saved intwo separate parquest files.
+-  [Spectronaut v.20.3  library free]  [LF_spectronaut_v20-3](https://cloud.cmb.ugent.be/index.php/s/eRDy32eFm7GsRY2) (predicted spectral library). TC and LiP runs are included in only one parquet file.
 
 In the each folder, you can also find the relative experiment description and the Human fasta files.
 
-📢  **ATTENTION** 📢  : Manuscript is under revision, ftp has a temporary closed access limited only for the reviewers. For the time being, contact [us](andrea.argentini@vib-ugent.be) to access the data.
 
 
 ## 🚀 How to run an analysis
@@ -123,6 +124,8 @@ params_start$comparisons <- c("ConditionRapa_LiP - ConditionDMSO_LiP")
 params_start$FC_thr <- 1
 params_start$adjPval_thr <- 0.1
 params_start$comparison_label <- c("Rapa - DMSO")
+params_start$paired <- FALSE
+
 
 # Run the report rendering
 render_dialipa_report(
@@ -158,6 +161,8 @@ Parameters available to customize the DIA‑LiPA analysis and the generated HTML
 - **POI**: Proteins of interest, specified using UniProt IDs. If not, POIs will include the proteins with statistal significant precursors.
 - **comparisons**: List of comparisons to test, including the variable name specified in the model (e.g., "ConditionA - ConditionB")
 - **comparison_label**: Human‑readable labels for comparisons (e.g., "GroupA - GroupB" → "A - B")
+- **paired**: Boolean flag to select the correction for paired (TRUE) or unpaired (FALSE) experiment
+
 
 In case both lip and Tc runs are in just one parquet file, *input_file_tc* can be not specified. 
 ---
