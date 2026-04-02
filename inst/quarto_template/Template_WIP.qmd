@@ -150,11 +150,13 @@ res_DE       <- data_$res_DE
 # General Quality Control 
 
 
-## QC-1
+## Identification & Quant 
 
 
 ```{r qc_a}
 #| layout-ncol: 2
+#| fig-align: center
+#| layout-valign: bottom
 #| fig-cap: 
 #|   - "Precursor and protein group identificiations per sample"
 #|   - "Normalised precursor quantity distributions per sample"
@@ -176,7 +178,7 @@ ids_ <- complete_rep |>
   scale_fill_observable() +
   facet_wrap(~Feature,
              scales = "free_y") +
-  labs(title = "Precursor and protein group identificiations per sample",
+  labs(title = "Precursor and protein group identification per sample",
        x = "Sample",
        y = "Identifications") +
   theme_bw() + 
@@ -239,7 +241,7 @@ ggsave(   file.path(params$folder_prj, "Result", "normalized_int_III.pdf"),plot 
 ```
 
 
-## QC-2
+## Peptide Characteristics
 ```{r qc_b}
 #| layout-ncol: 2
 #| fig-cap: 
@@ -348,14 +350,14 @@ ggsave(   file.path(params$folder_prj, "Result", "miss_cleavage_peptide.pdf"),pl
 ```
 
 
-## PCA / MDS 
+# MDS 
 
 
 ```{r }
 
-grid.draw(mds_plot)
+# grid.draw(mds_plot)
 
-#ggplotly(mds_plot, tooltip = "text")
+ggplotly(mds_plot, tooltip = "text")
 # mds_coords <- reducedDim(se, "MDS")
 # mdata <- as.data.frame(colData(se))
 
@@ -369,7 +371,7 @@ grid.draw(mds_plot)
 
 
 
-## DE Analysis
+# DE Analysis
 
 
 Using MSqRob2 with the following formula `r params$formula` 
@@ -385,7 +387,7 @@ if (!dir.exists(file.path(params$folder_prj, "Result","Contrast"))){
   dir.create(file.path( params$folder_prj, "Result","Contrast"), recursive = TRUE)
 }
 # old one params$comparisons
-for (a in   params$comparison_label ){
+for (a in  params$comparison_label ){
   log_info(a)
   log_info(check_and_substitute_forbidden_chars(a))
   dir.create(file.path(params$folder_prj,"Result","Contrast",check_and_substitute_forbidden_chars(a)), recursive = TRUE,showWarnings = TRUE)
@@ -410,7 +412,7 @@ for (cmp in names(res_DE)) {
     #cat(paste('POI : ', paste(res_DE[[cmp]]$POI, collapse = ' ' ),collapse = ' '))
     
     dialipar::render_child(data = res_DE[[cmp]],
-                 pe = NULL,
+                 pe = params,
                  label = cmp , 
                  path=file.path(params$folder_prj, "Result","Contrast",check_and_substitute_forbidden_chars(cmp)),  
                  template='_templateContrast.Rmd') 

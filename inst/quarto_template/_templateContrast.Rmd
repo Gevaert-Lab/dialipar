@@ -27,7 +27,17 @@ p_volcano %>% ggsave( file= file.path(path,paste0("Volcano",".pdf")) )
 
 #print(p_volcano)
 
-data$plotvolcano_usage %>% toWebGL()
+p_webgl <- plotly::toWebGL(data$plotvolcano_usage$volcano)
+p_webgl
+
+# 2. Render the interactive Plotly Volcano
+# Ensure the object is treated as an HTML widget
+# if (!is.null()) {
+#   p_webgl <- plotly::toWebGL(data$plotvolcano_usage)
+  
+#   # Use htmltools to force the widget to render in the child document
+#   htmltools::tagList(p_webgl)
+# }
 
 
 cat("\n\n")
@@ -38,7 +48,7 @@ log_info('  Top table rendering ....')
 
 ## filter only selected  
 
-table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se, usage_pval, usage_adjPval,Protein.Group, Genes, pep_type, total_repeats, start , end  )
+table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se, usage_pval, usage_adjPval,Protein.Group, Genes, pep_type  )
 
 # DT::datatable( table2viz %>% arrange(usage_adjPval)  ,
 #              extensions = c('FixedColumns', 'Scroller'),
@@ -50,6 +60,8 @@ table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se,
 # 1. Prepare data (preserving your sorting)
  table2viz_sorted <- table2viz %>% arrange(usage_adjPval)
 
+
+#   
 # # 2. Render Reactable
 tab_ <- reactable(
   table2viz_sorted,
@@ -62,7 +74,19 @@ tab_ <- reactable(
   compact = TRUE,           # Smaller padding (cleaner for large tables)
   searchable = TRUE,        # Adds the search box
   resizable = TRUE,         # Allows manual column resizing
-  
+
+  rowStyle = function(index) {
+    row_data <- table2viz_sorted[index, ]
+    # 1. Grab the values for this specific row using the index
+    # Replace 'usage_adjPval' and 'usage_logFC' with your actual colA and colB names
+    is_poi <- row_data$Protein.Group %in% pe$poi
+    is_sig <- !is.na(row_data$usage_adjPval) && row_data$usage_adjPval < pe$adjPval_thr
+    is_fc  <- !is.na(row_data$usage_logFC) && abs(row_data$usage_logFC) > pe$FC_thr
+    # Highlight POIs that are also significant
+    if (is_poi && is_sig && is_fc) {
+    return(list(background = "#9ee690", fontWeight = "bold")) # Light Green for "Success"
+    }
+  },
   # Column Definitions (Rounding, Significance, and Fixing)
   columns = list(
     # FIXED COLUMN (Sticky)
@@ -78,7 +102,10 @@ tab_ <- reactable(
       width = 100,
       format = colFormat(digits = 2)
     ),
-    
+    usage_se = colDef(
+      width = 100,
+      format = colFormat(digits = 2)
+    ),
     # SIGNIFICANT DIGITS (2 sig figs) for $usage\_pval$
     usage_pval = colDef(
       width = 100,
@@ -120,8 +147,31 @@ log_info('  Barcode plot rendering ....')
 
 #grid.draw(data$barplot_)
 
-p_barcode <- patchwork::wrap_elements(data$barplot_)
-print(p_barcode)
+# p_barcode <- patchwork::wrap_elements(data$barplot_)
+# print(p_barcode)
+
+
+for (p in names(data$barplot_)) {
+  cat("## Protein ", p, "\n")
+  p_grob <- data$barplot_[[p]]
+  grid::grid.newpage()
+  grid::grid.draw(p_grob)
+  #print(p_barcode)
+  cat("\n\n")
+}
+
+for (p in names(data$barplot_)) {
+  p_wrapped <- patchwork::wrap_elements(data$barplot_[[p]])
+  cat('printing')
+  ggplot2::ggsave(
+    filename =  paste0("Barplot_", p, ".png"),
+    plot = p_wrapped,
+    path = path,
+    width = 10,
+    height = 5,
+    dpi = 300
+  )
+}
 
 #plotly_barcode <- lapply(data$barcode_plty, function(p) if (!is.null(p)) ggplotly(p))
 

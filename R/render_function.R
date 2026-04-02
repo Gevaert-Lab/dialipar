@@ -9,17 +9,18 @@
 
 validate_template <- function(template) {
   # Define the list of valid templates
-  valid_templates <- c( "Template_.qmd")
+
+    valid_templates <- list( "Standard" ="Template_WIP.qmd")
 
   # Check if template is a string
   assertthat::assert_that(assertthat::is.string(template), msg = "template must be a string.")
 
   # Check if template belongs to the list of valid templates
-  if (!template %in% valid_templates) {
-    stop("Invalid template. The template must be one of the following: ", paste(valid_templates, collapse = ", "))
-  }
-
-  TRUE
+  if (!template %in% names(valid_templates)) {
+    stop("Invalid template. The template must be one of the following: ", paste( names(valid_templates), collapse = ", "))
+  }else{
+    return (valid_templates[template])
+}
 }
 
 
@@ -299,7 +300,9 @@ merge_default_parameters <- function  ( params_int  ){
 render_dialipa_report <- function(params_report, template, report_folder, report_filename ) {
 
   # Validate parameters
-  validate_template( template)
+  #validate_template( template)
+
+  template <- validate_template( template)
   validate_folder(report_folder)
   validate_filename( filename = report_filename)
 
@@ -327,8 +330,9 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$qc_data)) / 1024^2))
   log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$mds)) / 1024^2))
   log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$res_DE)) / 1024^2))
+  #browser()
   render_quarto_template( data_list = data_$result,
-    template_name = 'Template_WIP.qmd',
+    template_name = template,
     report_fld = report_folder, 
     report_fname= report_filename, 
     params_report = params_report
@@ -337,3 +341,4 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   
   return (-1)
 }
+  

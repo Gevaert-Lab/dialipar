@@ -64,7 +64,9 @@ make_mds <- function(pe) {
     ggplot2::labs(x = xlbl, y = ylbl) +
     ggplot2::theme_bw()
 
-  return(as_lean_grob(mds_plot))
+  #return(as_lean_grob(mds_plot))
+    return( mds_plot)
+
 }
 
 
@@ -439,13 +441,17 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
   se <- joinAssays(data,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") %>%  
           MultiAssayExperiment::getWithColData("joinedAssay")
   
-  
+  #browser()
    barplot_id <- plot_barcode (res_usage$POI_l, se , 
                   DE_result = full_toptable,   prot_seq = prot_seq_ ,  
                 group_column = 'Treatment'  , params= params )
   
-  barplot_id  <-  as_lean_grob( barplot_id$gg)
+  # I have list as output 
 
+for (p in names(barplot_id)) {
+    barplot_id[[p]] <- as_lean_grob(barplot_id[[p]])
+      #barplot_id  <-  as_lean_grob( barplot_id$gg)
+}
   #plotvolcano_ncorr = res_ncorrect_grob,
  
 
@@ -1073,7 +1079,6 @@ qc_precursor_annotation <- function(q_feat, mapping, type) {
       c("precursors_lip_norm", "precursors_tc_norm")
     }
     layer <- intersect(target_layers, available_layers)
-    
     # 2. Extract and Join
     qcObj <- q_feat[,,layer] %>%
       QFeatures::longForm(
@@ -1092,11 +1097,11 @@ dplyr::left_join(mapping, by = dplyr::join_by(Protein.Group == Accession)) %>%  
           "precursors_lip_usage" ~ "usage", 
           "precursors_tc_norm" ~ "TC",
           .default = .data$assay
-        ),
-        CondRep = paste(.data$Condition, .data$assay, .data$Replicate, sep = "_"),
-        Condition = paste(.data$Condition, .data$assay, sep = "_")
+        )
       )
-
+    #  ,
+    #     CondRep = paste(.data$Condition, .data$assay, .data$Replicate, sep = "_"),
+    #     Condition = paste(.data$Condition, .data$assay, sep = "_")
     return(list(error = '', status = 0, result = qcObj))
     
   }, error = function(err) {
@@ -1553,7 +1558,7 @@ make_volcano_plot_plotly <- function(df, params, title, annotation_fields = NULL
   df_sig <- df %>% dplyr::filter(.data$interest != "Not Relevant")
   df_noise <- df %>% dplyr::filter(.data$interest == "Not Relevant") %>% dplyr::sample_frac(0.1)
   df_for_plot <- dplyr::bind_rows(df_sig, df_noise)
-  
+  #browser()
   # ---------------------------------------------------------
   # GENERATE PLOTLY WITH SPLIT LEGENDS
   # ---------------------------------------------------------
@@ -1857,65 +1862,110 @@ plot_barcode <- function(POI, se, group_column = 'Treatment', DE_result,
       dplyr::mutate(effectSize = .data$logFC)
   }
 
+#  dplyr::mutate(
+#       Protein.Sequence = prot_seq,
+#       total_repeats = stringr::str_count(.data$Protein.Sequence, .data$Stripped.Sequence)
+#     ) %>%
+  # # Use left_join with your prot_seq data frame
+  #   dplyr::left_join(prot_seq %>% dplyr::select(.data$Accession, .data$Protein.Sequence), 
+  #                    by = dplyr::join_by(Protein.Group == Accession)) %>%
   # 3. Coordinate Calculation Logic
+  #browser()
+  poi_regex <- paste0("\\b(", paste(POI, collapse = "|"), ")\\b")
   DE_result <- DE_result %>%
-    dplyr::filter(grepl(POI, .data$Protein.Group)) %>%
-    dplyr::left_join(prot_seq %>% dplyr::select(.data$Accession, .data$Protein.Sequence), 
-                     by = dplyr::join_by( Protein.Group == Accession)) %>% 
-    dplyr::mutate(total_repeats = stringr::str_count(.data$Protein.Sequence, .data$Stripped.Sequence)) %>%
-    tidyr::uncount(.data$total_repeats, .remove = FALSE) %>%
-    dplyr::group_by(.data$Precursor.Id) %>%
+    dplyr::filter(grepl(poi_regex, .data$Protein.Group)) %>%
+    dplyr::left_join(
+      prot_seq %>% dplyr::select(.data$Accession, .data$Protein.Sequence), 
+      by = dplyr::join_by(Protein.Group == Accession)
+    ) %>% 
+    # Use rowwise to calculate locations for each specific peptide/protein pair
+    dplyr::rowwise() %>%
     dplyr::mutate(
-      repeat_nr = 1:dplyr::n(),
-      start = stringr::str_locate_all(.data$Protein.Sequence[1], .data$Stripped.Sequence[1])[[1]][.data$repeat_nr, 1],
-      end = stringr::str_locate_all(.data$Protein.Sequence[1], .data$Stripped.Sequence[1])[[1]][.data$repeat_nr, 2]
+      # Find all matches and store as a list-column matrix
+      locs = list(stringr::str_locate_all(.data$Protein.Sequence, .data$Stripped.Sequence)[[1]]),
+      total_repeats = nrow(.data$locs)
     ) %>%
     dplyr::ungroup() %>%
+    # Filter out any that didn't match (prevents errors)
+    dplyr::filter(.data$total_repeats > 0) %>%
+    # Expand the rows based on the number of repeats found
+    tidyr::uncount(.data$total_repeats, .remove = FALSE) %>%
+    # Now assign the start/end by picking the correct row from our list-column
+    dplyr::group_by(.data$Precursor.Id, .data$Stripped.Sequence) %>%
     dplyr::mutate(
-      type = dplyr::case_when(
-        .data$Proteotypic == 0 & .data$total_repeats > 1 ~ "Non-proteotypic, internally repeating",
-        .data$total_repeats > 1 ~ "Internally repeating",
-        .data$Proteotypic == 0 ~ "Non-proteotypic",
-        TRUE ~ "Proteotypic"
-      ) %>% factor(levels = names(colour_mapping_type)),
-      tier = match(.data$Precursor.Id, sort(unique(.data$Precursor.Id))),
-      max_tier = max(.data$tier)
-    )
+      repeat_nr = dplyr::row_number(),
+      start = .data$locs[[1]][.data$repeat_nr, 1],
+      end = .data$locs[[1]][.data$repeat_nr, 2]
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-.data$locs)
 
-  # 4. Completeness / Missing Values Logic
-  # Use %*% for matrix multiplication and model.matrix for group counts
   comp_data <- SummarizedExperiment::assay(se)[DE_result$Precursor.Id, , drop=FALSE]
   completeness <- is.na(comp_data) %*% stats::model.matrix(~ 0 + grouping)
-  
-  group_counts <- as.numeric(table(grouping))
-  
-  DE_result <- DE_result %>% 
-    dplyr::mutate(
-      missing = apply(completeness == matrix(group_counts, byrow = TRUE, 
-                                            nrow = nrow(completeness), 
-                                            ncol = ncol(completeness)), 1, function(x) {
-        h <- names(which(x)) %>% gsub(pattern = "grouping", replacement = "")
-        return(if(length(h) == 0) NA else h[1])
-      }),
-      significance = dplyr::case_when(
-        !is.na(.data$missing) ~ if(directionality) paste0(.data$missing, " Missing") else "Missing",
-        .data$adjPval < params$adjPval_thr & !is.na(.data$adjPval) ~ 
-           if(directionality) ifelse(.data$effectSize < 0, paste0(groups[1], " Up"), paste0(groups[2], " Up")) else "Significant",
-        TRUE ~ "Not Significant"
-      ) %>% factor(levels = signif_names),
-      section = dplyr::case_when(
-        .data$significance == "Not Significant" ~ "Not Significant",
-        !is.na(.data$missing) ~ "Missing",
-        TRUE ~ "Significant"
-      ) %>% factor(levels = c("Not Significant", "Significant", "Missing"))
-    ) %>% 
-    dplyr::filter(!(.data$significance == "Not Significant" & is.na(.data$adjPval))) %>%
-    dplyr::arrange(.data$significance, .data$type)
 
-  # 5. Delegate to make_barplot
-  barplot_obj <- make_barplot(df = DE_result, POI_ = POI, colour_mapping_significance, colour_mapping_type, expand)
+DE_result <- DE_result %>%
+  dplyr::mutate(
+    missing = apply(completeness == matrix(table(grouping), byrow = TRUE, 
+                                          nrow = nrow(completeness), 
+                                          ncol = ncol(completeness)), 1, function(x) {
+      h <- names(which(x)) %>% gsub(pattern = "grouping", replacement = "")
+      return(if(length(h) == 0) NA else h[1])
+    }),
+    significance = dplyr::case_when(
+      !is.na(.data$missing) ~ if(directionality) paste0(.data$missing, " Missing") else "Missing",
+      .data$adjPval < params$adjPval_thr & !is.na(.data$adjPval) ~ 
+        if(directionality) ifelse(.data$effectSize < 0, paste0(groups[1], " Up"), paste0(groups[2], " Up")) else "Significant",
+      TRUE ~ "Not Significant"
+    ) %>% factor(levels = signif_names),
+    # 3. CLASSY CLASSIFICATION
+    type = dplyr::case_when(
+      .data$Proteotypic == 0 & .data$total_repeats > 1 ~ "Non-proteotypic, internally repeating",
+      .data$total_repeats > 1 ~ "Internally repeating",
+      .data$Proteotypic == 0 ~ "Non-proteotypic",
+      TRUE ~ "Proteotypic"
+    ) %>% factor(levels = c("Non-proteotypic, internally repeating", "Non-proteotypic", "Internally repeating", "Proteotypic"))
+    ) %>% 
+    # 4. FINAL FILTERING
+    dplyr::filter(!(.data$significance == "Not Significant" & is.na(.data$adjPval))) %>%
+    # 5. THE STAIRCASE FIX: Arrange by start, then assign tier
+   dplyr::arrange(.data$start, .data$end) %>%
+    dplyr::mutate(
+      tier = dplyr::row_number(),
+      max_tier = dplyr::n()
+    )
+  # dplyr::mutate(
+  #   # Create unique tier IDs based on the sorted order
+  #   tier_id = factor(.data$Precursor.Id, levels = unique(.data$Precursor.Id)),
+  #   tier = as.numeric(.data$tier_id),
+  #   max_tier = max(.data$tier, na.rm = TRUE)
+  # )
+    ## old 
   
-  return(list(gg = barplot_obj))
+  # 5. Delegate to make_barplot
+  #browser()
+  all_barplots <- lapply(POI, function(current_poi) {
+  
+  # Filter data for THIS protein only
+  df_subset <- DE_result %>%
+    dplyr::filter(grepl(current_poi, .data$Protein.Group))
+  
+  # Only generate plot if data exists for this POI
+  if (nrow(df_subset) > 0) {
+    make_barplot(
+      df = df_subset, 
+      POI_ = current_poi, 
+      colour_mapping_significance = colour_mapping_significance, 
+      colour_mapping_type = colour_mapping_type, 
+      expand = expand
+    )
+  } else {
+    NULL
+  }
+})
+  names(all_barplots) <- POI
+ # barplot_obj <- make_barplot(df = DE_result, POI_ = POI, colour_mapping_significance, colour_mapping_type, expand)
+  
+  return(all_barplots)
 }
 
 #' @author Andrea Argentini
@@ -1940,18 +1990,20 @@ plot_barcode <- function(POI, se, group_column = 'Treatment', DE_result,
 make_barplot <- function(df, POI_, colour_mapping_significance, colour_mapping_type, expand) {
   
   # Note: ensure calculate_coverage is available in your package namespace
+  df <- df %>%
+    dplyr::mutate(Precursor.Id = factor(Precursor.Id, levels = unique(Precursor.Id)))
   
   plot <- ggplot(df, aes(x = .data$start, y = 1)) +
-    geom_rect(
-      aes(
-        xmin = .data$start,
-        xmax = .data$end,
-        ymin = (1 / .data$max_tier) * (.data$tier - 1),
-        ymax = (1 / .data$max_tier) * (.data$tier),
-        fill = .data$significance,
-        colour = .data$type
-      ),
-      linewidth = 0.2
+   geom_rect(
+    aes(
+      xmin = .data$start,
+      xmax = .data$end,
+      # Set ymin to 0 and ymax to 1 for ALL bars to fill the height
+      ymin = 0,
+      ymax = 1,
+      fill = .data$significance,
+      color  = .data$type
+    ),linewidth = 0.2
     ) +
     scale_x_continuous(
       breaks = seq(0, 1000 * 10^(floor(log10(df$length[1] - 1))), by = 100), 

@@ -64,11 +64,11 @@ devtools::install_github("Gevaert-Lab/dialipar")
 
 ## 📂 Quarto templates included
 
-The repository contains Quarto templates for generating reports:
+The package contains Quarto template for generating  the following reports:
 
-- `Template_.qmd` — Template for standard DIA‑LiPA analysis
+- `Standard` — Template for DIA‑LiPA analysis. This includes QC plots, unsupervised analsys (MDS plot ), and differential analysis at precursor level for the comparisons of interest
 
-Specify the template name via the `template_file` parameter in the `render_dialipa_report` function.
+Specify the template name via the `template` parameter in the `render_dialipa_report` function.
 
 ---
 
@@ -102,7 +102,6 @@ See section [Data Availability](#Data-Availability) for details.
 
 ```r
 report_target_folder <- "../path/dialipar_test/DIA-LiPA_result"
-template_file <- "Template_.qmd"
 output_filename <- "DIA-LiPA_report.html"
 
 params_start <- list()
@@ -130,7 +129,7 @@ params_start$paired <- FALSE
 # Run the report rendering
 render_dialipa_report(
   params = params_start,
-  template = template_file,
+  template = 'Standard',
   report_folder = report_target_folder,
   report_filename = output_filename
 )
