@@ -186,7 +186,21 @@ validate_params_minimal <- function(params) {
       msg = "Comparison label must contain at least one value."
     ),
      poi = list(
-      type = "character"
+      type = "character",
+      check = function(x) {
+        # 1. Allow it to be NULL or empty if it's optional
+        if (is.null(x) || length(x) == 0) return(FALSE)
+        
+        # 2. Check maximum length
+        count_ok <- length(x) <= 4
+        
+        # 3. Check format (UniProt ID regex)
+        # This pattern matches 6 to 10 alphanumeric characters
+        format_ok <- all(grepl("^[A-Z0-9]{6,10}$", x))
+        
+        return(count_ok && format_ok)
+      },
+      msg = "POI must contain 1-4 valid UniProt IDs (e.g., P12345) and could not be empty."
     ), 
     paired = list(
       type = 'logical')

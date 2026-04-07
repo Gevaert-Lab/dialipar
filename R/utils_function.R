@@ -435,15 +435,18 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
      )
   
     res_ncorrect_grob <- as_lean_grob(res_correct_file$volcano)
-
-  prot_seq_ <-  mapping_df %>% dplyr::filter(.data$Accession %in% res_usage$POI_l)
+  
+  prot_seq_ <-  mapping_df %>% dplyr::filter(.data$Accession %in% params$poi)
   
   se <- joinAssays(data,i=c("precursors_lip_norm","precursors_tc_norm"),  fcol = "Precursor.Id") %>%  
           MultiAssayExperiment::getWithColData("joinedAssay")
   
   #browser()
-   barplot_id <- plot_barcode (res_usage$POI_l, se , 
-                  DE_result = full_toptable,   prot_seq = prot_seq_ ,  
+  barplot_id_nodirection <- plot_barcode (params$poi, se , 
+                  DE_result = full_toptable,   prot_seq = prot_seq_ ,  directionality = FALSE, 
+                group_column = 'Treatment'  , params= params )
+   barplot_id <- plot_barcode (params$poi, se , 
+                  DE_result = full_toptable,   prot_seq = prot_seq_ ,  directionality = TRUE, 
                 group_column = 'Treatment'  , params= params )
   
   # I have list as output 
@@ -452,12 +455,18 @@ for (p in names(barplot_id)) {
     barplot_id[[p]] <- as_lean_grob(barplot_id[[p]])
       #barplot_id  <-  as_lean_grob( barplot_id$gg)
 }
+  
+for (p in names(barplot_id_nodirection)) {
+    barplot_id_nodirection[[p]] <- as_lean_grob(barplot_id_nodirection[[p]])
+      #barplot_id  <-  as_lean_grob( barplot_id$gg)
+}  
   #plotvolcano_ncorr = res_ncorrect_grob,
  
 
     return(  list( full_toptable    =    full_toptable,
                    plotvolcano_usage  =  res_usage_plt,
                    plotvolcano_file  =  res_ncorrect_grob,
+                   barplot_nodirec= barplot_id_nodirection,
                    barplot_= barplot_id
                   )
                 )
@@ -1489,16 +1498,18 @@ make_volcano_plot_plotly <- function(df, params, title, annotation_fields = NULL
       dplyr::select(.data$adjPval, .data$pval, .data$logFC, .data$Protein.Group, 
                     .data$Genes, .data$pep_type, dplyr::any_of("tooltip_text")) 
   }
-  
   # Filter significant Protein Groups
-  sigPG <- df %>%
-    dplyr::filter(!is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
-    dplyr::arrange(.data$pval) %>% 
-    dplyr::pull(.data$Protein.Group)
+  # sigPG <- df %>%
+  #   dplyr::filter(!is.na(.data$adjPval), .data$adjPval <= params$adjPval_thr) %>%
+  #   dplyr::arrange(.data$pval) %>% 
+  #   dplyr::pull(.data$Protein.Group)
   
-  nPOI <- function(x) sapply(seq_along(x), function(i, x) { length(unique(x[1:i])) }, x = x)
-  POI_Plot <- sigPG[nPOI(sigPG) <= 10] %>% unique()
+  # nPOI <- function(x) sapply(seq_along(x), function(i, x) { length(unique(x[1:i])) }, x = x)
+  #POI_Plot <- sigPG[nPOI(sigPG) <= 10] %>% unique()
   
+  POI_Plot <-params$poi
+  
+
   POI_Plot_Genes <- df %>%
     dplyr::select(.data$Protein.Group, .data$Genes) %>%
     dplyr::filter(.data$Protein.Group %in% POI_Plot) %>%
@@ -1726,15 +1737,18 @@ make_volcano_plot <- function(df, params, title, annotation_fields = NULL, to_sa
                     .data$Protein.Group, .data$Genes, .data$pep_type)
   }
 
-  # 3. Logic for POIs
-  sigPG <- df %>%
-    dplyr::filter(.data$adjPval <= params$adjPval_thr) %>%
-    dplyr::arrange(.data$pval) %>%
-    dplyr::pull(.data$Protein.Group)
+  # # 3. Logic for POIs
+  # sigPG <- df %>%
+  #   dplyr::filter(.data$adjPval <= params$adjPval_thr) %>%
+  #   dplyr::arrange(.data$pval) %>%
+  #   dplyr::pull(.data$Protein.Group)
 
-  nPOI <- function(x) sapply(seq_along(x), function(i, x) { length(unique(x[1:i])) }, x = x)
-  POI_Plot <- unique(sigPG[nPOI(sigPG) <= 10])
+  # nPOI <- function(x) sapply(seq_along(x), function(i, x) { length(unique(x[1:i])) }, x = x)
+  # POI_Plot <- unique(sigPG[nPOI(sigPG) <= 10])
 
+    POI_Plot <-params$poi
+
+    
   POI_Plot_Genes <- df %>%
     dplyr::select(.data$Protein.Group, .data$Genes) %>%
     dplyr::filter(.data$Protein.Group %in% POI_Plot) %>%

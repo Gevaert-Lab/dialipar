@@ -48,7 +48,17 @@ log_info('  Top table rendering ....')
 
 ## filter only selected  
 
-table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se, usage_pval, usage_adjPval,Protein.Group, Genes, pep_type  )
+table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se, usage_pval, usage_adjPval,Protein.Group, Genes, pep_type ,start, end )
+table2viz <- table2viz %>% rename( PrecursorID= Precursor.Id,
+                                    logFC = usage_logFC,
+                                    SE = usage_se,
+                                    Pval = usage_pval,
+                                    adjPval = usage_adjPval,
+                                    ProteinGroup = Protein.Group,
+                                    Peptype =pep_type, 
+                                    Start = start,
+                                    End = end
+                                  )
 
 # DT::datatable( table2viz %>% arrange(usage_adjPval)  ,
 #              extensions = c('FixedColumns', 'Scroller'),
@@ -58,7 +68,7 @@ table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se,
 #  ) %>%  formatRound(columns=c('usage_logFC'), digits=2) %>%
 #   formatSignif(columns = c('usage_pval', 'usage_adjPval'), digits = 2) 
 # 1. Prepare data (preserving your sorting)
- table2viz_sorted <- table2viz %>% arrange(usage_adjPval)
+ table2viz_sorted <- table2viz %>% arrange(adjPval)
 
 
 #   
@@ -79,9 +89,9 @@ tab_ <- reactable(
     row_data <- table2viz_sorted[index, ]
     # 1. Grab the values for this specific row using the index
     # Replace 'usage_adjPval' and 'usage_logFC' with your actual colA and colB names
-    is_poi <- row_data$Protein.Group %in% pe$poi
-    is_sig <- !is.na(row_data$usage_adjPval) && row_data$usage_adjPval < pe$adjPval_thr
-    is_fc  <- !is.na(row_data$usage_logFC) && abs(row_data$usage_logFC) > pe$FC_thr
+    is_poi <- row_data$ProteinGroup %in% pe$poi
+    is_sig <- !is.na(row_data$adjPval) && row_data$adjPval < pe$adjPval_thr
+    is_fc  <- !is.na(row_data$logFC) && abs(row_data$logFC) > pe$FC_thr
     # Highlight POIs that are also significant
     if (is_poi && is_sig && is_fc) {
     return(list(background = "#9ee690", fontWeight = "bold")) # Light Green for "Success"
@@ -90,7 +100,7 @@ tab_ <- reactable(
   # Column Definitions (Rounding, Significance, and Fixing)
   columns = list(
     # FIXED COLUMN (Sticky)
-    Precursor.Id = colDef(
+    PrecursorID = colDef(
       sticky = "left",
       minWidth = 200, # Set length here
       style = list(borderRight = "1px solid #eee"),
@@ -98,16 +108,16 @@ tab_ <- reactable(
     ),
     
     # ROUNDING (2 decimal places) for $usage\_logFC$
-    usage_logFC = colDef(
+    logFC = colDef(
       width = 100,
       format = colFormat(digits = 2)
     ),
-    usage_se = colDef(
+    SE = colDef(
       width = 100,
       format = colFormat(digits = 2)
     ),
     # SIGNIFICANT DIGITS (2 sig figs) for $usage\_pval$
-    usage_pval = colDef(
+    Pval = colDef(
       width = 100,
       cell = function(value) {
         if (is.na(value)) return("-")
@@ -116,7 +126,7 @@ tab_ <- reactable(
       }
     ),
     # SIGNIFICANT DIGITS for $usage\_adjPval$
-    usage_adjPval = colDef(
+    adjPval = colDef(
       width = 100,
       cell = function(value) {
         if (is.na(value)) return("-")
@@ -129,7 +139,7 @@ tab_ <- reactable(
 
 tagList(tab_)
 
-ttable <- table2viz %>% arrange(usage_adjPval) 
+ttable <- table2viz %>% arrange(adjPval) 
 
 
 
@@ -150,10 +160,23 @@ log_info('  Barcode plot rendering ....')
 # p_barcode <- patchwork::wrap_elements(data$barplot_)
 # print(p_barcode)
 
+```
+
+```{r  barplot_code,echo=FALSE, results='asis', fig.width=12, fig.height=3 }
+
 
 for (p in names(data$barplot_)) {
-  cat("## Protein ", p, "\n")
+  #cat("## Protein ", p, "\n")
   p_grob <- data$barplot_[[p]]
+  grid::grid.newpage()
+  grid::grid.draw(p_grob)
+  #print(p_barcode)
+  cat("\n\n")
+}
+
+for (p in names(data$barplot_nodirec)) {
+  #cat("## Protein ", p, "\n")
+  p_grob <- data$barplot_nodirec[[p]]
   grid::grid.newpage()
   grid::grid.draw(p_grob)
   #print(p_barcode)
@@ -162,9 +185,9 @@ for (p in names(data$barplot_)) {
 
 for (p in names(data$barplot_)) {
   p_wrapped <- patchwork::wrap_elements(data$barplot_[[p]])
-  cat('printing')
+  
   ggplot2::ggsave(
-    filename =  paste0("Barplot_", p, ".png"),
+    filename =  paste0("Barplot_withdirect", p, ".png"),
     plot = p_wrapped,
     path = path,
     width = 10,
@@ -173,25 +196,17 @@ for (p in names(data$barplot_)) {
   )
 }
 
-#plotly_barcode <- lapply(data$barcode_plty, function(p) if (!is.null(p)) ggplotly(p))
-
-# htmltools::tagList(data$barcode_plty)
-# log_info('  Barcode plot saving as pdf ....')
-# log_info(paste(  data$POI, collapse= ' '))
-
-# log_info(paste( names(data$barcode_gg), collapse= ' '))
-
-# for (a in names(data$barcode_gg)) {
-#     log_info(a)
-#    tryCatch({
-#    ggsave(file.path(path,paste0("Barcode_",a,".pdf")) , plot=data$barcode_gg[[a]] , dpi = 600, height = 6, width = 6 )
-#  message("Saved: ", file.path(path,paste0("Barcode_",a,".pdf")))
-#     }, error = function(e) {
-#       warning(sprintf("Failed to save %s: %s", paste0("Barcode_",a,".pdf") , e$message))
-#     })
-# }
-
-
-
+for (p in names(data$barplot_nodirec)) {
+  p_wrapped <- patchwork::wrap_elements(data$barplot_[[p]])
+  
+  ggplot2::ggsave(
+    filename =  paste0("Barplot_nodirect", p, ".png"),
+    plot = p_wrapped,
+    path = path,
+    width = 10,
+    height = 5,
+    dpi = 300
+  )
+}
 
 ```
