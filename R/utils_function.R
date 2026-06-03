@@ -203,7 +203,8 @@ render_quarto_template <- function(data_list, template_name, report_fld, report_
 #' @importFrom lobstr obj_size
 
 process_dialipa_data <- function (params_report, analysis_type = "unpaired" ){
-  fastaproc <- read_fasta_ann(params_report$fasta_file )
+      #browser()
+      fastaproc <- read_fasta_ann(params_report$fasta_file )
       input_data <- parse_input(params_report$input_file_tc, 
                                 params_report$input_file_lip,   
                                 params_report$design_file)
@@ -368,7 +369,9 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
   
   ## filtering null adj pval 
 
-  full_toptable <- full_toptable %>% dplyr::filter(!is.na(.data$usage_adjPval) & (!is.na(.data$adjPval)))
+  #full_toptable <- full_toptable %>% dplyr::filter(!is.na(.data$usage_adjPval) & (!is.na(.data$adjPval)))
+  #full_toptable <- full_toptable %>% dplyr::filter(!is.na(.data$adjPval))
+  
   full_toptable <- full_toptable %>% 
                                   dplyr::select(
                                     .data$Precursor.Id, .data$usage_adjPval, .data$usage_df, .data$usage_logFC, 
@@ -376,8 +379,9 @@ build_df_result <- function (label, data , layer , layer_ = NULL , df_anno, mapp
                                     .data$Genes, .data$Proteotypic, .data$Stripped.Sequence, .data$contrast, 
                                     .data$Protein.Sequence, .data$length, .data$missed_cleavages, 
                                     .data$total_repeats, .data$start, .data$end, .data$pep_type, .data$AA_last
-                                  ) %>% 
-                                  dplyr::filter(!is.na(.data$usage_adjPval))
+                                  ) 
+  #%>% 
+  #                                dplyr::filter(!is.na(.data$usage_adjPval))
 
    # Define a NEW "Grob Stripper"
   as_lean_grob <- function(p) {
@@ -1940,22 +1944,21 @@ DE_result <- DE_result %>%
     ) %>% factor(levels = c("Non-proteotypic, internally repeating", "Non-proteotypic", "Internally repeating", "Proteotypic"))
     ) %>% 
     # 4. FINAL FILTERING
-    dplyr::filter(!(.data$significance == "Not Significant" & is.na(.data$adjPval))) %>%
-    # 5. THE STAIRCASE FIX: Arrange by start, then assign tier
-   dplyr::arrange(.data$start, .data$end) %>%
-    dplyr::mutate(
-      tier = dplyr::row_number(),
-      max_tier = dplyr::n()
-    )
-  # dplyr::mutate(
-  #   # Create unique tier IDs based on the sorted order
-  #   tier_id = factor(.data$Precursor.Id, levels = unique(.data$Precursor.Id)),
-  #   tier = as.numeric(.data$tier_id),
-  #   max_tier = max(.data$tier, na.rm = TRUE)
-  # )
-    ## old 
-  
-  # 5. Delegate to make_barplot
+  dplyr::filter(
+    !is.na(.data$adjPval) |                       # Keep if it has a P-value
+    grepl("Missing", as.character(.data$significance)) # KEEP if it's labeled Missing
+  ) %>%
+    # 5. THE FRACTIONAL STACKING FIX
+  # Group by BOTH Protein and Sequence so the tier math resets correctly
+  dplyr::group_by(.data$Protein.Group, .data$Stripped.Sequence) %>%
+  dplyr::mutate(
+    tier = match(.data$Precursor.Id, sort(unique(.data$Precursor.Id))),
+    max_tier = max(.data$tier, na.rm = TRUE)
+  ) %>%
+  dplyr::ungroup() %>%
+  # Keep your final sorting
+  dplyr::arrange(.data$Protein.Group, .data$start, .data$end)
+ 
   #browser()
   all_barplots <- lapply(POI, function(current_poi) {
   
@@ -2012,9 +2015,9 @@ make_barplot <- function(df, POI_, colour_mapping_significance, colour_mapping_t
     aes(
       xmin = .data$start,
       xmax = .data$end,
-      # Set ymin to 0 and ymax to 1 for ALL bars to fill the height
-      ymin = 0,
-      ymax = 1,
+    # LEGACY MATH: Stack variants vertically within the bar
+      ymin = (1 / .data$max_tier) * (.data$tier - 1),
+      ymax = (1 / .data$max_tier) * (.data$tier),
       fill = .data$significance,
       color  = .data$type
     ),linewidth = 0.2
