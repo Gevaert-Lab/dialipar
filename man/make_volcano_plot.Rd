@@ -4,7 +4,14 @@
 \alias{make_volcano_plot}
 \title{make_volcano_plot}
 \usage{
-make_volcano_plot(df, params, title, annotation_fields, poi_vis, to_save)
+make_volcano_plot(
+  df,
+  params,
+  title,
+  annotation_fields = NULL,
+  to_save = FALSE,
+  usage = TRUE
+)
 }
 \arguments{
 \item{df}{Data.frame containing differential expression results (must include columns like logFC, pval, adjPval, interest, Protein.Group, significance)}
@@ -15,12 +22,16 @@ make_volcano_plot(df, params, title, annotation_fields, poi_vis, to_save)
 
 \item{annotation_fields}{Character vector; column names to use in tooltip annotations (e.g. c("Protein.Names", "Genes"))}
 
-\item{poi_vis}{Character or numeric vector; points-of-interest used to determine colour palette length (e.g. vector of proteins/genes of interest)}
-
 \item{to_save}{Logical; if FALSE prepare interactive-style tooltip text (for saving as interactive plot), if TRUE produce a static plot with labeled significant points}
+
+\item{usage}{Logical; if TRUE, uses "usage_" prefixed columns (default TRUE)}
 }
 \value{
-A ggplot object representing the volcano plot (interactive tooltip text is placed in a column named `tooltip_text` when to_save is FALSE)
+A list containing:
+\itemize{
+  \item \code{volcano}: A ggplot object representing the volcano plot.
+  \item \code{POI_l}: A character vector of the top 10 significant Protein Groups.
+}
 }
 \description{
 Generates a volcano plot from differential expression results using ggplot2.

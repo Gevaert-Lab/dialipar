@@ -2,21 +2,26 @@
 % Please edit documentation in R/utils_function.R
 \name{read_fasta_ann}
 \alias{read_fasta_ann}
-\title{read_fasta_ann}
+\title{Read and Annotate FASTA File}
 \usage{
 read_fasta_ann(input_fasta)
 }
 \arguments{
-\item{input_fasta}{Path to the FASTA file to read (character)}
+\item{input_fasta}{Path to the FASTA file (character).}
 }
 \value{
-A list with elements:
-  \item{status}{integer; 0 if successful, 1 if an error occurred}
-  \item{error}{character; error message when status is 1, otherwise an empty string}
-  \item{result}{data.frame; mapping with columns Accession, Protein.Sequence, length (NULL on error)}
+A list with the following components:
+\itemize{
+  \item \code{status}: Integer (0 for success, 1 for error).
+  \item \code{error}: Character string containing error messages.
+  \item \code{result}: A \code{data.frame} with columns: \code{Accession}, 
+    \code{Protein.Sequence}, and \code{length}.
+}
 }
 \description{
-Read a FASTA file and return a mapping of accession to protein sequence and sequence length. Extracts the accession (second field when splitting the FASTA header by "|") and computes protein length.
+Reads a FASTA file and extracts protein accessions, full sequences, and 
+sequence lengths. It assumes a standard UniProt-style header where the 
+accession is the second field when split by a pipe character.
 }
 \author{
 Andrea Argentini

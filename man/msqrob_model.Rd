@@ -2,32 +2,30 @@
 % Please edit documentation in R/utils_function.R
 \name{msqrob_model}
 \alias{msqrob_model}
-\title{msqrob_model}
+\title{Fit msqrob2 Models and Test Contrasts}
 \usage{
 msqrob_model(pe, params, layer)
 }
 \arguments{
-\item{pe}{QFeatures object containing the assay to model}
+\item{pe}{A \code{QFeatures} object.}
 
-\item{params}{List of parameters; must include at least:
-\describe{
-  \item{formula}{character or formula string used for msqrob modeling}
-  \item{comparisons}{character vector of coefficient names to test (e.g. c("condB-condA"))}
-}}
+\item{params}{A list containing \code{formula} (string) and \code{comparisons} (character vector).}
 
-\item{layer}{Character; name/index of the assay layer in the QFeatures object to analyze}
+\item{layer}{Character. The name of the assay in \code{pe} to model.}
 }
 \value{
-A list with elements:
-  \item{status}{integer; 0 if successful, 1 if an error occurred}
-  \item{error}{character; error message when status is 1, otherwise an empty string}
-  \item{q_feat}{QFeatures object; the input QFeatures augmented with fitted models and hypothesis test results (NULL on error)}
+A list with the following components:
+\itemize{
+  \item \code{status}: Integer (0 for success, 1 for error).
+  \item \code{error}: Character string containing error messages.
+  \item \code{q_feat}: The updated \code{QFeatures} object with models and test results.
+  \item \code{contr_exp}: The contrast matrix used for testing.
+}
 }
 \description{
-Fit msqrob2 models and perform hypothesis testing for differential expression.
-Given a QFeatures object, a parameter list (including a model formula and comparisons),
-and the assay layer name, this function fits msqrob models, constructs contrasts from
-the provided comparisons, runs hypothesis tests, and returns the QFeatures object with results.
+Fits robust linear models to proteomics data using the msqrob2 framework. 
+It performs hypothesis testing based on a user-defined formula and 
+contrast matrix, handling peptide-level or protein-level quantification.
 }
 \author{
 Andrea Argentini

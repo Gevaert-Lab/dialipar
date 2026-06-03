@@ -10,13 +10,14 @@ test_that("dialipar_checkdesignI", {
    params$design <- test_path('SampleAnnotation.txt')
    #params$fasta_ <-  'SP_9606_PK.fasta' 
 
-  out <-  parse_input( params$input_tc, params$input_lip ,  dual = TRUE , params$design)
+  out <-  parse_input( params$input_tc, params$input_lip  , params$design)
   # Perform the tests
   #print(import2_qfeature (dfMsqrob, design, params, min_col_need_design, diann_colname = lst_wide_columns  )$error)
   expect_equal(out$status,0) # Ensure the data is loaded  
 
 } 
 )
+
 
 test_that("dialipar_checkdesignII", {
 
@@ -26,7 +27,7 @@ test_that("dialipar_checkdesignII", {
    params$design <- test_path('SampleAnnotation_wrong.txt')
    #params$fasta_ <-  'SP_9606_PK.fasta' 
 
-  out <-  parse_input( params$input_tc, params$input_lip ,  dual = TRUE , params$design)
+  out <-  parse_input( params$input_tc, params$input_lip  , params$design)
   # Perform the tests
   #print(import2_qfeature (dfMsqrob, design, params, min_col_need_design, diann_colname = lst_wide_columns  )$error)
   expect_equal(out$status,1) # Ensure the data is loaded  
@@ -36,7 +37,7 @@ test_that("dialipar_checkdesignII", {
 
 
 test_that("dialipar_fastaCheck", {
-			params <- list()
+	params <- list()
    params$input_tc <- test_path('TC_small.parquet')
    params$input_lip <- test_path('LiP_small.parquet')
    params$design <- test_path('SampleAnnotation.txt')
@@ -45,8 +46,8 @@ test_that("dialipar_fastaCheck", {
   	suppressWarnings({
   	fastaproc <- read_fasta_ann(params$fasta_file )
      } )
-   ##print(fastaproc$result %>%  distinct(Accession)  )
-   expect_true(all(is.na(fastaproc$result %>%  distinct(Accession))))
+   ## in case of fasta not seperated by |, we still retrieve correct accesion.
+   expect_false(all(is.na(fastaproc$result %>%  distinct(Accession))))
     
       #})
   	
@@ -55,48 +56,46 @@ test_that("dialipar_fastaCheck", {
 
 test_that("dialipar_workflowI", {
 			params <- list()
-   params$input_tc <- test_path('TC_small.parquet')
-   params$input_lip <- test_path('LiP_small.parquet')
-   params$design <- test_path('SampleAnnotation.txt')
-   params$fasta_file <-  test_path('SP_9606_PK.fasta') 
+         params$input_tc <- test_path('TC_small.parquet')
+         params$input_lip <- test_path('LiP_small.parquet')
+         params$design <- test_path('SampleAnnotation.txt')
+         params$fasta_file <-  test_path('SP_9606_PK.fasta') 
 
-			inputproc <-  parse_input( params$input_tc, params$input_lip ,  dual = TRUE , params$design)
-  	suppressWarnings({
-  		fastaproc <- read_fasta_ann(params$fasta_file )})
-  	annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-			res_norm <- consensus_normalisation(annproc$result)
-			LiP_annotated <- res_norm$normalized %>%  filter(Pipeline=="LiP")
-  	tc_annotated <- res_norm$normalized %>%  filter(Pipeline=="TC")
-   saveRDS(tc_annotated,test_path('tc-processed.Rds') )
-   expect_equal(annproc$status,0) # spectronaut data is annotated
-   expect_equal(res_norm$status,0) # normalization is ok 
-			expect_equal(dim(res_norm$normalized)[1],12) # dim normalized data
-   expect_equal(dim(res_norm$normalized)[2],30) # dim normalized data
-  	expect_equal(dim(res_norm$normalized %>%  filter(Pipeline=="LiP"))[1],8) # dim norm data LiP
-   expect_equal(dim(res_norm$normalized %>%  filter(Pipeline=="TC"))[1],4) # dim norm data TC
+			a_ <-  parse_input( params$input_tc, params$input_lip , params$design)
+  	      suppressWarnings({ 
+                  qf_base <- create_qfeat_(a_$design, a_$lip, a_$tc, a_$diann_flag)})
+        #print(qf_base)
+        expect_equal(qf_base$status,0)
+        expect_equal(length(qf_base$result),18)
+          suppressWarnings({  qf_norm <- normalization_scaling_factor(qf_base$result) })
+        expect_equal(dim(assay(qf_norm$result[['proteins_tc']]))[1],39)
+        expect_equal(dim(assay(qf_norm$result[['precursors_lip_norm']]))[1],49)	  
 } )
 
-
-
-test_that("dialipar_qfI", {
+test_that("dialipar_workflow_Unpaired", {
 			params <- list()
-   params$input_tc <- test_path('TC_small.parquet')
-   params$input_lip <- test_path('LiP_small.parquet')
-   params$design <- test_path('SampleAnnotation.txt')
-   params$fasta_file <-  test_path('SP_9606_PK.fasta') 
-   tc_input <-readRDS(test_path('TC_processed_full.Rds'))
-  
-			inputproc <-  parse_input( params$input_tc, params$input_lip ,  dual = TRUE , params$design)
-			coverageproc_tc <- calculate_coverages(tc_input)
-  
-			col  <- c('Run', 'Precursor.Id', 'total_repeats','repeat_nr','Modified.Sequence', 
-          'Stripped.Sequence', 'Accession', 'Protein.Group','Protein.Names','Genes','pep_type','Proteotypic')
-   tcproc <- input_qf(coverageproc_tc$result  , inputproc$design , 
-																							columns_not_wide = col, 
-																							flag_tc = TRUE )
-    expect_equal (dim(tcproc$qf_pe[['precursor']])[1], 182 )
-				expect_equal( dim(colData(tcproc$qf_pe)) [1], 8 )
-  		expect_equal( dim(colData(tcproc$qf_pe)) [2], 6)
-
-			
-} )
+         params$input_tc <- test_path('TC_small.parquet')
+         params$input_lip <- test_path('LiP_small.parquet')
+         params$design <- test_path('SampleAnnotation.txt')
+         params$fasta_file <-  test_path('SP_9606_PK.fasta') 
+         params$formula <-  '~  -1 + Treatment'
+         params$comparisons <-  c('TreatmentRapa - TreatmentDMSO')
+   
+			a_ <-  parse_input( params$input_tc, params$input_lip , params$design)
+  	      suppressWarnings({ 
+                  qf_base <- create_qfeat_(a_$design, a_$lip, a_$tc, a_$diann_flag)})
+        #print(qf_base)
+        expect_equal(qf_base$status,0)
+        expect_equal(length(qf_base$result),18)
+        suppressWarnings({  qf_norm <- normalization_scaling_factor(qf_base$result) })
+        expect_equal(dim(assay(qf_norm$result[['proteins_tc']]))[1],39)
+        expect_equal(dim(assay(qf_norm$result[['precursors_lip_norm']]))[1],49)
+         suppressWarnings({ a <-  msqrob_model(pe = qf_norm$result, params = params, layer = 'precursors_lip_norm' )
+        b  <-  msqrob_model(pe = a$q_feat, params = params, layer = 'proteins_tc' )
+         })
+        qf_unpair <- calculate_lip_usage(b$q_feat, i_lip = "precursors_lip_norm", 
+                                                   i_tc = "proteins_tc",
+                                                   contrasts = base::colnames(b$contr_exp))
+         expect_equal(dim(assay(qf_unpair$qf[['proteins_tc']]))[1],39)
+        expect_equal(dim(assay(qf_unpair$qf[['precursors_lip_norm']]))[1],49)
+         } )

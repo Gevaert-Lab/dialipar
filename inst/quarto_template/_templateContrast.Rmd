@@ -2,6 +2,10 @@
 
 ```{r}
 library(plotly)
+library(grid)
+library(patchwork)
+library(reactable)
+library(htmltools)
 log_info('Inside contrast visual  ....')
 
 label_work <- gsub('Group','',label)
@@ -9,46 +13,200 @@ label_work <- gsub('Group','',label)
 
 log_info('  Vocano plot ....')
 
-data$volcano
-ggsave(file.path(path,paste0("Volcano_annotated",".pdf")) , plot=data$volcano2file , dpi = 600, height = 6, width = 10 )
+
+## new ! 
+
+# grid.newpage()
+# grid.arrange(data$plotvolcano_usage)
+
+# grob object worked
+p_volcano <- patchwork::wrap_elements(data$plotvolcano_file)
+
+p_volcano %>% ggsave( file= file.path(path,paste0("Volcano",".pdf")) )
+
+
+#print(p_volcano)
+
+p_webgl <- plotly::toWebGL(data$plotvolcano_usage$volcano)
+p_webgl
+
+# 2. Render the interactive Plotly Volcano
+# Ensure the object is treated as an HTML widget
+# if (!is.null()) {
+#   p_webgl <- plotly::toWebGL(data$plotvolcano_usage)
+  
+#   # Use htmltools to force the widget to render in the child document
+#   htmltools::tagList(p_webgl)
+# }
+
+
+cat("\n\n")
+
+#ggsave(file.path(path,paste0("Volcano_annotated",".pdf")) , plot=data$volcano2file , dpi = 600, height = 6, width = 10 )
 library(DT)
 log_info('  Top table rendering ....')
 
 ## filter only selected  
 
-table2viz <- data$toptable %>% select( precursor.Id, logFC, pval, adjPval,Protein.Group,Accession, Genes, pep_type, total_repeats, start , end , significance, interest )
+table2viz <- data$full_toptable %>% select( Precursor.Id, usage_logFC, usage_se, usage_pval, usage_adjPval,Protein.Group, Genes, pep_type ,start, end )
+table2viz <- table2viz %>% rename( PrecursorID= Precursor.Id,
+                                    logFC = usage_logFC,
+                                    SE = usage_se,
+                                    Pval = usage_pval,
+                                    adjPval = usage_adjPval,
+                                    ProteinGroup = Protein.Group,
+                                    Peptype =pep_type, 
+                                    Start = start,
+                                    End = end
+                                  )
 
-DT::datatable( table2viz %>% arrange(adjPval)  ,
-             extensions = c('FixedColumns', 'Scroller'),
-             options = list(fixedColumns = TRUE, scrollY = 400, scrollX = TRUE,
-                            scroller = TRUE, dom = 'Bfrtip', autoWidth = TRUE
-             ),
- ) %>%  formatRound(columns=c('logFC'), digits=2) %>%
-  formatSignif(columns = c('pval', 'adjPval'), digits = 2) 
+# DT::datatable( table2viz %>% arrange(usage_adjPval)  ,
+#              extensions = c('FixedColumns', 'Scroller'),
+#              options = list(fixedColumns = TRUE, scrollY = 400, scrollX = TRUE,
+#                             scroller = TRUE, dom = 'Bfrtip', autoWidth = TRUE
+#              ),
+#  ) %>%  formatRound(columns=c('usage_logFC'), digits=2) %>%
+#   formatSignif(columns = c('usage_pval', 'usage_adjPval'), digits = 2) 
+# 1. Prepare data (preserving your sorting)
+ table2viz_sorted <- table2viz %>% arrange(adjPval)
 
-ttable <- data$toptable %>% arrange(adjPval) 
+
+#   
+# # 2. Render Reactable
+tab_ <- reactable(
+  table2viz_sorted,
+  # Layout & Scroller features
+  pagination = TRUE,       # If you want the infinite scroll/scroller feel
+  highlight = TRUE,         # Highlights row on hover
+  defaultPageSize = 15,
+  showPageSizeOptions = TRUE,
+  striped = TRUE,           # Alternating row colors
+  compact = TRUE,           # Smaller padding (cleaner for large tables)
+  searchable = TRUE,        # Adds the search box
+  resizable = TRUE,         # Allows manual column resizing
+
+  rowStyle = function(index) {
+    row_data <- table2viz_sorted[index, ]
+    # 1. Grab the values for this specific row using the index
+    # Replace 'usage_adjPval' and 'usage_logFC' with your actual colA and colB names
+    is_poi <- row_data$ProteinGroup %in% pe$poi
+    is_sig <- !is.na(row_data$adjPval) && row_data$adjPval < pe$adjPval_thr
+    is_fc  <- !is.na(row_data$logFC) && abs(row_data$logFC) > pe$FC_thr
+    # Highlight POIs that are also significant
+    if (is_poi && is_sig && is_fc) {
+    return(list(background = "#9ee690", fontWeight = "bold")) # Light Green for "Success"
+    }
+  },
+  # Column Definitions (Rounding, Significance, and Fixing)
+  columns = list(
+    # FIXED COLUMN (Sticky)
+    PrecursorID = colDef(
+      sticky = "left",
+      minWidth = 200, # Set length here
+      style = list(borderRight = "1px solid #eee"),
+      headerStyle = list(borderRight = "1px solid #eee")
+    ),
+    
+    # ROUNDING (2 decimal places) for $usage\_logFC$
+    logFC = colDef(
+      width = 100,
+      format = colFormat(digits = 2)
+    ),
+    SE = colDef(
+      width = 100,
+      format = colFormat(digits = 2)
+    ),
+    # SIGNIFICANT DIGITS (2 sig figs) for $usage\_pval$
+    Pval = colDef(
+      width = 100,
+      cell = function(value) {
+        if (is.na(value)) return("-")
+        # formatC with "g" handles significant digits and scientific notation automatically
+        formatC(value, digits = 2, format = "g")
+      }
+    ),
+    # SIGNIFICANT DIGITS for $usage\_adjPval$
+    adjPval = colDef(
+      width = 100,
+      cell = function(value) {
+        if (is.na(value)) return("-")
+        formatC(value, digits = 2, format = "g")
+      }
+    )
+  )
+  
+)
+
+tagList(tab_)
+
+ttable <- table2viz %>% arrange(adjPval) 
+
+
+
+
 write.csv2(ttable, file= file.path(path,paste0("Toptable",".csv")), row.names=FALSE )
 log_info('  Barcode plot rendering ....')
 
-#plotly_barcode <- lapply(data$barcode_plty, function(p) if (!is.null(p)) ggplotly(p))
+##
+# [1] "Precursor.Id"      "usage_logFC"       "usage_se"          "usage_t"           "usage_df"          "usage_pval"        "usage_adjPval"     "logFC"             "se"                "df"                "t"                
+# [12] "pval"              "adjPval"           "logFC_tc"          "se_tc"             "df_tc"             "t_tc"              "pval_tc"           "adjPval_tc"        "Protein.Group"     "Genes"             "Proteotypic"      
+# [23] "Stripped.Sequence" "contrast"          "Protein.Sequence"  "length"            "missed_cleavages"  "total_repeats"     "start"             "end"               "pep_type"          "AA_last"
 
-htmltools::tagList(data$barcode_plty)
-log_info('  Barcode plot saving as pdf ....')
-log_info(paste(  data$POI, collapse= ' '))
 
-log_info(paste( names(data$barcode_gg), collapse= ' '))
 
-for (a in names(data$barcode_gg)) {
-    log_info(a)
-   tryCatch({
-   ggsave(file.path(path,paste0("Barcode_",a,".pdf")) , plot=data$barcode_gg[[a]] , dpi = 600, height = 6, width = 6 )
- message("Saved: ", file.path(path,paste0("Barcode_",a,".pdf")))
-    }, error = function(e) {
-      warning(sprintf("Failed to save %s: %s", paste0("Barcode_",a,".pdf") , e$message))
-    })
+
+#grid.draw(data$barplot_)
+
+# p_barcode <- patchwork::wrap_elements(data$barplot_)
+# print(p_barcode)
+
+```
+
+```{r  barplot_code,echo=FALSE, results='asis', fig.width=12, fig.height=3 }
+
+
+for (p in names(data$barplot_)) {
+  #cat("## Protein ", p, "\n")
+  p_grob <- data$barplot_[[p]]
+  grid::grid.newpage()
+  grid::grid.draw(p_grob)
+  #print(p_barcode)
+  cat("\n\n")
 }
 
+for (p in names(data$barplot_nodirec)) {
+  #cat("## Protein ", p, "\n")
+  p_grob <- data$barplot_nodirec[[p]]
+  grid::grid.newpage()
+  grid::grid.draw(p_grob)
+  #print(p_barcode)
+  cat("\n\n")
+}
 
+for (p in names(data$barplot_)) {
+  p_wrapped <- patchwork::wrap_elements(data$barplot_[[p]])
+  
+  ggplot2::ggsave(
+    filename =  paste0("Barplot_withdirect", p, ".png"),
+    plot = p_wrapped,
+    path = path,
+    width = 10,
+    height = 5,
+    dpi = 300
+  )
+}
 
+for (p in names(data$barplot_nodirec)) {
+  p_wrapped <- patchwork::wrap_elements(data$barplot_[[p]])
+  
+  ggplot2::ggsave(
+    filename =  paste0("Barplot_nodirect", p, ".png"),
+    plot = p_wrapped,
+    path = path,
+    width = 10,
+    height = 5,
+    dpi = 300
+  )
+}
 
 ```

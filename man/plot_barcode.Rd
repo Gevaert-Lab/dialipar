@@ -2,26 +2,50 @@
 % Please edit documentation in R/utils_function.R
 \name{plot_barcode}
 \alias{plot_barcode}
-\title{plot_barcode}
+\title{Plot Peptide Barcode for a Protein of Interest}
 \usage{
-plot_barcode(POI, input, group_column, DE_result, indicate_direction = F)
+plot_barcode(
+  POI,
+  se,
+  group_column = "Treatment",
+  DE_result,
+  indicate_direction = FALSE,
+  prot_seq,
+  usage = TRUE,
+  directionality = FALSE,
+  expand = FALSE,
+  params
+)
 }
 \arguments{
-\item{POI}{Character vector of protein accessions (Uniprot IDs) to plot}
+\item{POI}{Character. The protein accession (e.g., Uniprot ID) to visualize.}
 
-\item{input}{Data frame or tibble with precursor-level annotations and quantitative columns (must include Accession, Precursor.Id, Drug, normPQ, Proteotypic, total_repeats, coverage, Stripped.Sequence, repeat_nr)}
+\item{se}{A \code{SummarizedExperiment} or \code{QFeatures} object.}
 
-\item{group_column}{Unquoted column name (tidy evaluated) indicating the grouping variable in input (e.g., Drug)}
+\item{group_column}{Character. The column name in \code{colData(se)} used for grouping.}
 
-\item{DE_result}{Data frame of differential expression results (must contain precursor.Id, logFC, pval, adjPval)}
+\item{DE_result}{Data frame of differential expression results.}
 
-\item{indicate_direction}{Logical; if TRUE annotate significance with directionality (default FALSE)}
+\item{indicate_direction}{Logical. Currently a placeholder for directionality logic.}
+
+\item{prot_seq}{Data frame containing \code{Accession} and \code{Protein.Sequence}.}
+
+\item{usage}{Logical. If TRUE, uses \code{usage_} columns from DE results.}
+
+\item{directionality}{Logical. If TRUE, labels significance with "Up" or "Down" strings.}
+
+\item{expand}{Logical. Passed to \code{make_barplot} for faceting.}
+
+\item{params}{List. Contains \code{adjPval_thr} and other thresholds.}
 }
 \value{
-A plotting object (the result returned by make_barplot), typically a ggplot or list containing plot elements for the barcode visualization
+A list containing the ggplot object (\code{gg}).
 }
 \description{
-Generate a barcode-style plot for one or more proteins of interest (POIs). The function summarizes precursor-level signals, annotates significance and peptide types, computes coverage and directionality, and delegates plotting to make_barplot.
+Generates a barcode-style visualization for a specific protein. It processes 
+differential expression results, calculates peptide coordinates (including 
+handling of repeating sequences), determines significance based on both 
+p-values and data completeness (missing values), and calls \code{make_barplot}.
 }
 \author{
 Andrea Argentini

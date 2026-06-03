@@ -4,7 +4,7 @@ Title: DIA-LiPA reporting tool
 Version: 0.99.0
 Authors@R: c(
     person(
-      "andrea", "argentni",
+      "Andrea", "Argentini",
       email = "andrea.argentini@ugent.be",
       role = c("aut", "cre")
     )
@@ -17,36 +17,44 @@ Encoding: UTF-8
 Depends:
     R (>= 4.4)
 Imports:
-  arrow,
-  dplyr,
-  stringr,
-  seqinr,
-  IRanges,
-  ggplot2,
-  BiocManager,
-  MsCoreUtils,
-  SummarizedExperiment,
-  withr,
-  utils,
-  ggsci,
-  tidyr,
-  stats,
-  rlang,
-  tibble,
-  QFeatures,
-  ggrepel,
-  msqrob2,
-  quarto,
-  logger,
-  fs,
-  knitr,
-  assertthat,
-  magrittr,
-  plotly,
-  yaml
+    arrow,
+    assertthat,
+    BiocGenerics,
+    BiocManager,
+    dplyr,
+    fs,
+    ggplot2,
+    ggrepel,
+    ggsci,
+    SingleCellExperiment,
+    IRanges,
+    knitr,
+    logger,
+    magrittr,
+    matrixStats,
+    methods,
+    MsCoreUtils,
+    msqrob2,
+    MultiAssayExperiment,
+    plotly,
+    QFeatures,
+    quarto,
+    rlang,
+    S4Vectors,
+    scater,
+    seqinr,
+    stats,
+    stringr,
+    SummarizedExperiment,
+    tibble,
+    tidyr,
+    utils,
+    withr,
+    yaml,
+    lobstr
 Suggests: 
     rmarkdown,
     testthat (>= 3.0.0),
     xfun
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 VignetteBuilder: knitr

@@ -9,17 +9,18 @@
 
 validate_template <- function(template) {
   # Define the list of valid templates
-  valid_templates <- c( "Template_.qmd")
+
+    valid_templates <- list( "Standard" ="Template_WIP.qmd")
 
   # Check if template is a string
   assertthat::assert_that(assertthat::is.string(template), msg = "template must be a string.")
 
   # Check if template belongs to the list of valid templates
-  if (!template %in% valid_templates) {
-    stop("Invalid template. The template must be one of the following: ", paste(valid_templates, collapse = ", "))
-  }
-
-  TRUE
+  if (!template %in% names(valid_templates)) {
+    stop("Invalid template. The template must be one of the following: ", paste( names(valid_templates), collapse = ", "))
+  }else{
+    return (valid_templates[template])
+}
 }
 
 
@@ -46,7 +47,6 @@ validate_filename <- function(filename) {
   if (grepl(invalid_chars, filename)) {
     stop("The file name contains invalid characters. Invalid characters are: <>:\"/\\|?*")
   }
-
   TRUE
 }
 
@@ -186,9 +186,24 @@ validate_params_minimal <- function(params) {
       msg = "Comparison label must contain at least one value."
     ),
      poi = list(
-      type = "character"
-    )
-
+      type = "character",
+      check = function(x) {
+        # 1. Allow it to be NULL or empty if it's optional
+        if (is.null(x) || length(x) == 0) return(FALSE)
+        
+        # 2. Check maximum length
+        count_ok <- length(x) <= 4
+        
+        # 3. Check format (UniProt ID regex)
+        # This pattern matches 6 to 10 alphanumeric characters
+        format_ok <- all(grepl("^[A-Z0-9]{6,10}$", x))
+        
+        return(count_ok && format_ok)
+      },
+      msg = "POI must contain 1-4 valid UniProt IDs (e.g., P12345) and could not be empty."
+    ), 
+    paired = list(
+      type = 'logical')
 
   )
 
@@ -294,11 +309,14 @@ merge_default_parameters <- function  ( params_int  ){
 #' @importFrom utils modifyList
 #' @importFrom withr with_dir
 #' @importFrom assertthat assert_that is.string
+#' @importFrom lobstr obj_size
 
 render_dialipa_report <- function(params_report, template, report_folder, report_filename ) {
 
   # Validate parameters
-  validate_template( template)
+  #validate_template( template)
+
+  template <- validate_template( template)
   validate_folder(report_folder)
   validate_filename( filename = report_filename)
 
@@ -318,162 +336,23 @@ render_dialipa_report <- function(params_report, template, report_folder, report
   log_info ('DIA-LiPA start  ...')
 
   ## Drafting the  flow
-  if (params_report$input_file_tc == ''){
-      inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = FALSE, params_report$design_file)
-
-  }else{
-          inputproc  <- parse_input ( params_report$input_file_tc, params_report$input_file_lip ,  dual = TRUE, params_report$design_file)
-  }
-  if (inputproc$status == 1) stop(inputproc$error)
-  fastaproc <- read_fasta_ann(params_report$fasta_file )
+  type_analysis <- if (params_report$paired) "paired" else "unpaired"
+  data_ <- process_dialipa_data(params_report = params_report, analysis_type = type_analysis )
   
-  if (fastaproc$status == 1) stop(fastaproc$error)
-
-  if (inputproc$diann_flag == TRUE) {
-      annproc <- annotate_diann( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-
-  }else{
-      annproc <- annotate_spectronaut( inputproc$design, inputproc$lip, inputproc$tc, fastaproc$result)
-
-  }
-  log_info( paste('Dim annotate_diann ', dim(annproc$result), collapse = ' '))
-  if (annproc$status == 1) stop(annproc$error)
-  consproc <- consensus_normalisation(annproc$result)
-  
-  if (consproc$status == 1) stop(consproc$error)
-
-  LiP_annotated <- consproc$normalized %>%  filter(Pipeline=="LiP")
-  TC_annotated <-  consproc$normalized %>% filter( Pipeline=="TC")
-
-  log_info( paste('Dim LiP_annotated ', dim(LiP_annotated), collapse = ' '))
-  
-  log_info( paste('Dim TC_annotated ', dim(TC_annotated), collapse = ' '))
-
-  coverageproc_lip  <- calculate_coverages(LiP_annotated)
-  coverageproc_tc <- calculate_coverages(TC_annotated)
-  complete_report <- bind_rows(coverageproc_lip$result, coverageproc_tc$result)
-  log_info( paste('Dim complete_report ', dim(complete_report), collapse = ' '))
-
-  diann_col <- c('Run', 
-      'Precursor.Id', 
-      'pep_type',
-      'total_repeats',
-      'repeat_nr',
-      'start',
-      'end',
-      'Modified.Sequence', 
-      'Stripped.Sequence', 
-      'Accession',
-      'Protein.Group',
-      'Protein.Names',
-      'Genes',
-      'pep_type',
-      'Proteotypic')
+  log_info(' DATA bag   ')
+  log_info(sprintf("Size all  : %.2f MB", as.numeric(obj_size(data_$result)) / 1024^2))
+  log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$qc_data)) / 1024^2))
+  log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$mds)) / 1024^2))
+  log_info(sprintf("Size : %.2f MB", as.numeric(obj_size(data_$result$res_DE)) / 1024^2))
+  #browser()
+  render_quarto_template( data_list = data_$result,
+    template_name = template,
+    report_fld = report_folder, 
+    report_fname= report_filename, 
+    params_report = params_report
+  )
   
   
-  tcproc <- input_qf (coverageproc_tc$result , inputproc$design , columns_not_wide = diann_col, flag_tc = TRUE )
-
-  tc_proc_scaling <- processing_tc_qfeat(tcproc$qf_pe, inputproc$design )
-  ## TODO hard oded 
-  LiP_annotated_corr <- 
-  coverageproc_lip$result %>% 
-      mutate( ID = paste(Protein.Group, Treatment),
-            abundance_adjustment = tc_proc_scaling$adj_scaling_df$abundance_adjustment[ match(ID,   tc_proc_scaling$adj_scaling_df$ID)] %>% 
-              ifelse(is.na(.), 0, .),
-            adjPQ = normPQ-abundance_adjustment ) 
-
-  res_lip <- input_qf ( LiP_annotated_corr , 
-                     inputproc$design , 
-                      columns_not_wide = diann_col, 
-                      flag_tc = FALSE )
-  res_de <-  msqrob_model(pe = res_lip$qf_p, params = params_report, layer = 'precursor' )
-
-  res_DE_ <-  lapply(params_report$comparisons, dep_volcano_barcode,
-                    data= res_de$q_feat  ,
-                    params = params_report ,
-                    df_anno =LiP_annotated_corr ,
-                    layer= 'precursor' )
-  names(res_DE_) <-  params_report$comparison_label
-
-  ## -- template creation legacy code.
-
-  template_source_folder <- system.file("quarto_template", package = "dialipar")
-  if (template_source_folder == "") {
-    stop("Template folder not found in the package.")
-  }
-
-
-  # Create a unique temporary working directory
-  temp_work_dir <- file.path(tempdir(), paste0("quarto_temp_", Sys.getpid()))
-  dir.create(temp_work_dir, recursive = TRUE, showWarnings = FALSE)
-  log_info('Temp folder created : {temp_work_dir}')
-
-  # Copy the entire template folder content to the temporary directory
-  # This copies all files and subfolders (e.g., resource folders with JS/CSS files)
-  success <- file.copy(from = template_source_folder,
-                       to = temp_work_dir,
-                       recursive = TRUE)
-  if (!success) {
-    stop("Failed to copy the template folder to the temporary directory.")
-  }
-  log_info('Copy template file ...done')
-  saveRDS(  coverageproc_lip$result , file.path(temp_work_dir,basename(template_source_folder), 'lip_comp.RDS'  ))
-  params_report$lip_rep <-   file.path(temp_work_dir,basename(template_source_folder),'lip_comp.RDS'  )
-
-  saveRDS(complete_report, file.path(temp_work_dir,basename(template_source_folder), 'complete_.RDS'  ))
-  params_report$complete_rep <-   file.path(temp_work_dir,basename(template_source_folder),'complete_.RDS'  )
-
-  saveRDS(res_DE_, file.path(temp_work_dir,basename(template_source_folder), 'resDE_.RDS'  ))
-  params_report$res_DE <-   file.path(temp_work_dir,basename(template_source_folder),'resDE_.RDS' )
-  log_info('Copy Rds results ...done')
-   # Construct the path to the copied template file in the temp directory.
-  # Assumes that the template file is directly inside the copied folder.
-  temp_template_path <- file.path(temp_work_dir, basename(template_source_folder), template)
-  if (!file.exists(temp_template_path)) {
-    stop("Template file not found in the temporary directory: ", temp_template_path)
-  }
-
-  path <- file.path(temp_work_dir, basename(template_source_folder))
-
-  tryCatch({
-    with_dir(path, {
-      quarto_render(
-        input = temp_template_path,
-        output_format = "html",
-        output_file = report_filename,
-        execute_params = params_report,
-        quarto_args = c(  "--no-clean",
-                         "--output-dir", path)
-      )
-    })
-  }, error = function(e) {
-    print("Error in Quarto rendering:")
-    print(e$message)
-    print("Cleaning Temp folder")
-    unlink(temp_work_dir, recursive = TRUE)
-    stop(e)
-  })
-
-  resource_folder_name <- paste0(tools::file_path_sans_ext(report_filename), "_files")
-  rendered_report_path <- file.path(path, report_filename)
-
-  if (!dir.exists(report_folder)) {
-    dir.create(report_folder, recursive = TRUE)
-  }
-
-  log_info('Copying rendered html report ...')
-  # Copy the rendered HTML report to the target folder
-  file.copy(from = rendered_report_path, to = file.path(report_folder, report_filename), overwrite = TRUE)
-  # If a resource folder was generated, copy it as well
-  temp_resource_path <- file.path(temp_work_dir, resource_folder_name)
-  if (dir.exists(temp_resource_path)) {
-    file.copy(from = temp_resource_path,
-              to = file.path(report_folder, resource_folder_name),
-              recursive = TRUE, overwrite = TRUE)
-  }
-
-  log_info('Cleaning temp folder ...')
-  # Optionally, remove the temporary working directory to clean up
-  unlink(temp_work_dir, recursive = TRUE)
   return (-1)
 }
+  
